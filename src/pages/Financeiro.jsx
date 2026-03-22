@@ -5,6 +5,7 @@ import {
   ChevronDown, ChevronUp, ShoppingCart, Stethoscope, SlidersHorizontal
 } from 'lucide-react'
 import ModalLancamento from '../components/financeiro/ModalLancamento'
+import { imprimirRelatorioFinanceiro } from '../utils/imprimir'
 
 // ── Utilitários ───────────────────────────────────────────
 
@@ -393,11 +394,16 @@ function ModalRelatorio({ onFechar }) {
     carregar()
   }, [ano, mes])
 
-  function imprimir() {
-    window.print()
-  }
-
   const tituloMes = `${MESES[mes - 1]} de ${ano}`
+
+  function imprimir() {
+    if (!dados) return
+    imprimirRelatorioFinanceiro({
+      lancamentos: dados.lista,
+      periodo: tituloMes,
+      totais: { receitas: dados.totalR, despesas: dados.totalD },
+    })
+  }
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 print:hidden">

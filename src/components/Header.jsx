@@ -12,6 +12,7 @@ const titulos = {
   '/financeiro':    { titulo: 'Financeiro',     sub: 'Caixa e lançamentos' },
   '/estoque':       { titulo: 'Estoque',        sub: 'Produtos e insumos' },
   '/vendas':        { titulo: 'Vendas',         sub: 'PDV e histórico de vendas' },
+  '/fiado':         { titulo: 'Fiado',          sub: 'Contas a receber e cobranças' },
   '/consultas':     { titulo: 'Consultas',      sub: 'Prontuários e atendimentos' },
   '/internacoes':   { titulo: 'Internações',    sub: 'Pacientes internados' },
   '/cirurgias':     { titulo: 'Cirurgias',      sub: 'Procedimentos cirúrgicos' },

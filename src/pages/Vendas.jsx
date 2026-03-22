@@ -2,7 +2,9 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   ShoppingCart, Plus, Minus, Trash2, Search, CheckCircle2,
   XCircle, Receipt, Package, Loader2, ChevronDown, ChevronUp,
+  HandCoins, User, Printer,
 } from 'lucide-react'
+import { imprimirVenda } from '../utils/imprimir'
 
 // ── Formata moeda ─────────────────────────────────────────
 function fmt(v) {
@@ -134,6 +136,13 @@ function CardVenda({ venda, onCancelar }) {
           {fmt(venda.total_final)}
         </span>
         <div className="flex items-center gap-1 flex-shrink-0">
+          <button
+            onClick={() => imprimirVenda({ ...venda, total: venda.total_final })}
+            className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-50 text-slate-600 border border-slate-200 rounded-lg text-xs font-medium hover:bg-slate-100 transition-colors"
+          >
+            <Printer size={11} />
+            Imprimir
+          </button>
           {venda.status === 'concluida' && (
             <button
               onClick={() => onCancelar(venda)}
@@ -191,6 +200,11 @@ export default function Vendas() {
   const [historico, setHistorico] = useState([])
   const [carregando, setCarregando] = useState(false)
   const [modalCancelar, setModalCancelar] = useState(null) // venda a cancelar
+  const [tipoPgto, setTipoPgto]       = useState('vista') // 'vista' | 'prazo'
+  const [vencimento, setVencimento]   = useState('')
+  const [buscaCliente, setBuscaCliente] = useState('')
+  const [clientes, setClientes]       = useState([])
+  const [clienteSelecionado, setClienteSelecionado] = useState(null)
 
   // Carregar produtos do estoque
   const carregarProdutos = useCallback(async () => {
@@ -220,6 +234,9 @@ export default function Vendas() {
   useEffect(() => {
     if (aba === 'historico') carregarHistorico()
   }, [aba, carregarHistorico])
+  useEffect(() => {
+    if (tipoPgto === 'prazo') window.api.donos.listar().then(setClientes)
+  }, [tipoPgto])
 
   // Produtos filtrados pela busca
   const produtosFiltrados = produtos.filter(p =>
@@ -276,17 +293,28 @@ export default function Vendas() {
   // Finalizar venda
   async function finalizarVenda() {
     if (carrinho.length === 0) return
+    if (tipoPgto === 'prazo' && !clienteSelecionado) {
+      alert('Selecione o cliente para venda a prazo (fiado).')
+      return
+    }
     setFinalizando(true)
     try {
       await window.api.vendas.criar({
-        itens:       carrinho,
-        total:       subtotal,
-        desconto:    descontoVal,
-        total_final: totalFinal,
+        itens:           carrinho,
+        total:           subtotal,
+        desconto:        descontoVal,
+        total_final:     totalFinal,
+        tipo_pagamento:  tipoPgto,
+        id_dono:         clienteSelecionado?.id || null,
+        data_vencimento: vencimento || null,
       })
       setCarrinho([])
       setDesconto('')
-      await carregarProdutos() // atualiza estoque
+      setTipoPgto('vista')
+      setClienteSelecionado(null)
+      setBuscaCliente('')
+      setVencimento('')
+      await carregarProdutos()
       setAba('historico')
       carregarHistorico()
     } finally {
@@ -446,16 +474,63 @@ export default function Vendas() {
                   </div>
                 </div>
 
+                {/* Tipo de pagamento */}
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 mb-1.5">Pagamento</p>
+                  <div className="flex gap-2">
+                    <button onClick={() => setTipoPgto('vista')}
+                      className={`flex-1 py-1.5 rounded-lg text-xs font-medium border transition-colors ${tipoPgto === 'vista' ? 'bg-emerald-50 border-emerald-300 text-emerald-700' : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'}`}>
+                      À Vista
+                    </button>
+                    <button onClick={() => setTipoPgto('prazo')}
+                      className={`flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg text-xs font-medium border transition-colors ${tipoPgto === 'prazo' ? 'bg-amber-50 border-amber-300 text-amber-700' : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'}`}>
+                      <HandCoins size={11} /> Fiado
+                    </button>
+                  </div>
+                </div>
+
+                {/* Seletor de cliente (fiado) */}
+                {tipoPgto === 'prazo' && (
+                  <div className="space-y-2">
+                    <div className="relative">
+                      <User size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input type="text" placeholder="Buscar cliente..."
+                        value={buscaCliente}
+                        onChange={e => { setBuscaCliente(e.target.value); setClienteSelecionado(null) }}
+                        className="w-full pl-7 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-amber-400"
+                      />
+                    </div>
+                    {buscaCliente && !clienteSelecionado && (
+                      <div className="border border-slate-200 rounded-lg overflow-hidden max-h-28 overflow-y-auto">
+                        {clientes.filter(c => c.nome.toLowerCase().includes(buscaCliente.toLowerCase())).map(c => (
+                          <button key={c.id}
+                            onClick={() => { setClienteSelecionado(c); setBuscaCliente(c.nome) }}
+                            className="w-full text-left px-3 py-1.5 text-xs hover:bg-amber-50 text-slate-700 transition-colors">
+                            {c.nome}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {clienteSelecionado && (
+                      <p className="text-xs text-amber-700 font-medium bg-amber-50 px-2.5 py-1.5 rounded-lg">
+                        ✓ {clienteSelecionado.nome}
+                      </p>
+                    )}
+                    <input type="date" value={vencimento} onChange={e => setVencimento(e.target.value)}
+                      className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-amber-400"
+                      title="Vencimento (opcional)"
+                    />
+                  </div>
+                )}
+
                 {/* Botão finalizar */}
                 <button
                   onClick={finalizarVenda}
                   disabled={finalizando || carrinho.length === 0}
-                  className="w-full flex items-center justify-center gap-2 py-3 bg-emerald-600 text-white rounded-xl text-sm font-bold hover:bg-emerald-700 transition-colors disabled:opacity-60"
+                  className={`w-full flex items-center justify-center gap-2 py-3 text-white rounded-xl text-sm font-bold transition-colors disabled:opacity-60 ${tipoPgto === 'prazo' ? 'bg-amber-500 hover:bg-amber-600' : 'bg-emerald-600 hover:bg-emerald-700'}`}
                 >
-                  {finalizando
-                    ? <Loader2 size={16} className="animate-spin" />
-                    : <CheckCircle2 size={16} />}
-                  {finalizando ? 'Finalizando...' : 'Finalizar Venda'}
+                  {finalizando ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
+                  {finalizando ? 'Finalizando...' : tipoPgto === 'prazo' ? 'Registrar Fiado' : 'Finalizar Venda'}
                 </button>
               </div>
             )}

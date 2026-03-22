@@ -153,6 +153,7 @@ function ModalExame({ idPet, exameEditando, onSalvar, onFechar }) {
   const [form, setForm]           = useState(exameEditando ? { ...exameEditando } : formVazio())
   const [salvando, setSalvando]   = useState(false)
   const [erro, setErro]           = useState('')
+  const [adicionados, setAdicionados] = useState([]) // exames salvos nesta sessão
 
   // Estados do PDF
   const [carregandoArq, setCarregandoArq] = useState(false)
@@ -163,6 +164,14 @@ function ModalExame({ idPet, exameEditando, onSalvar, onFechar }) {
 
   function set(campo, valor) {
     setForm(f => ({ ...f, [campo]: valor }))
+    setErro('')
+  }
+
+  function resetarForm() {
+    setForm(formVazio())
+    setTextoPdf('')
+    setSugestoes(null)
+    setMostrarPdf(false)
     setErro('')
   }
 
@@ -181,6 +190,16 @@ function ModalExame({ idPet, exameEditando, onSalvar, onFechar }) {
           setTextoPdf(ext.texto)
           setSugestoes(ext.sugestoes)
           setMostrarPdf(true)
+          // Auto-preenche campos detectados imediatamente
+          if (ext.sugestoes) {
+            setForm(f => ({
+              ...f,
+              tipo:        ext.sugestoes.tipo        || f.tipo,
+              data_coleta: ext.sugestoes.data_coleta || f.data_coleta,
+              laboratorio: ext.sugestoes.laboratorio || f.laboratorio,
+              veterinario: ext.sugestoes.veterinario || f.veterinario,
+            }))
+          }
         }
       }
     } finally {
@@ -200,8 +219,8 @@ function ModalExame({ idPet, exameEditando, onSalvar, onFechar }) {
     setSugestoes(null)
   }
 
-  async function salvar() {
-    if (!form.tipo) { setErro('Selecione o tipo de exame'); return }
+  async function _salvarDados(fecharAoFim) {
+    if (!form.tipo) { setErro('Selecione o tipo de exame'); return false }
     setSalvando(true)
     try {
       const dados = {
@@ -220,13 +239,23 @@ function ModalExame({ idPet, exameEditando, onSalvar, onFechar }) {
       } else {
         await window.api.exames.criar(dados)
       }
-      onSalvar()
+      if (fecharAoFim) {
+        onSalvar()
+      } else {
+        setAdicionados(prev => [...prev, { tipo: form.tipo, arquivo_nome: form.arquivo_nome }])
+        resetarForm()
+      }
+      return true
     } catch (e) {
       setErro('Erro ao salvar: ' + e.message)
+      return false
     } finally {
       setSalvando(false)
     }
   }
+
+  async function salvar()           { await _salvarDados(true) }
+  async function salvarEAdicionar() { await _salvarDados(false) }
 
   return (
     <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-start justify-center p-4 overflow-y-auto">
@@ -420,20 +449,47 @@ function ModalExame({ idPet, exameEditando, onSalvar, onFechar }) {
               />
             </div>
 
+            {/* Exames já adicionados nesta sessão */}
+            {adicionados.length > 0 && (
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+                <p className="text-xs font-semibold text-emerald-700 mb-1.5">
+                  ✓ {adicionados.length} exame{adicionados.length > 1 ? 's' : ''} salvos nesta sessão:
+                </p>
+                <div className="space-y-1">
+                  {adicionados.map((a, i) => (
+                    <p key={i} className="text-xs text-emerald-600 flex items-center gap-1.5">
+                      <CheckCircle size={11} />
+                      {a.tipo}{a.arquivo_nome ? ` — ${a.arquivo_nome}` : ''}
+                    </p>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Botões */}
-            <div className="flex gap-3 pt-1">
+            <div className="flex gap-2 pt-1 flex-wrap">
               <button
                 onClick={onFechar}
                 className="flex-1 py-2.5 border border-slate-200 rounded-xl text-sm text-slate-600 hover:bg-slate-50 transition-colors"
               >
-                Cancelar
+                {adicionados.length > 0 ? 'Fechar' : 'Cancelar'}
               </button>
+              {!exameEditando && (
+                <button
+                  onClick={salvarEAdicionar}
+                  disabled={salvando}
+                  className="flex-1 py-2.5 bg-slate-700 text-white rounded-xl text-sm font-medium hover:bg-slate-800 disabled:opacity-50 transition-colors flex items-center justify-center gap-1.5"
+                >
+                  <Plus size={13} />
+                  {salvando ? 'Salvando...' : 'Salvar e adicionar outro'}
+                </button>
+              )}
               <button
                 onClick={salvar}
                 disabled={salvando}
                 className="flex-1 py-2.5 bg-emerald-600 text-white rounded-xl text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 transition-colors"
               >
-                {salvando ? 'Salvando...' : exameEditando ? 'Salvar alterações' : 'Registrar exame'}
+                {salvando ? 'Salvando...' : exameEditando ? 'Salvar alterações' : 'Salvar e fechar'}
               </button>
             </div>
           </div>

@@ -1,11 +1,12 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   Lock, Building2, Layers, Database, Code2,
   Eye, EyeOff, Save, RefreshCw, AlertTriangle,
   CheckCircle2, Info, HardDrive, Users, PawPrint,
   CalendarDays, Syringe, Wallet, Package, Stethoscope,
   BedDouble, Scissors, ClipboardList, UserRound, X,
-  Archive, FolderOpen, Upload, Clock, Loader2, ShoppingCart
+  Archive, FolderOpen, Upload, Clock, Loader2, ShoppingCart,
+  ImagePlus, Trash2
 } from 'lucide-react'
 import { useConfig } from '../contexts/ConfigContext'
 
@@ -131,16 +132,26 @@ function TabClinica({ onSalvo }) {
   const [form, setForm] = useState({
     clinica_nome: '', clinica_telefone: '', clinica_whatsapp: '',
     clinica_endereco: '', clinica_email: '', clinica_cnpj: '',
-    clinica_crmv: '', clinica_site: '',
+    clinica_crmv: '', clinica_site: '', clinica_logo: '',
   })
   const [salvando, setSalvando] = useState(false)
   const [ok, setOk] = useState(false)
+  const inputLogoRef = useRef(null)
 
   useEffect(() => {
     window.api.configuracoes.getAll().then(all => {
       setForm(f => ({ ...f, ...Object.fromEntries(Object.entries(all).filter(([k]) => k.startsWith('clinica_'))) }))
     })
   }, [])
+
+  function selecionarLogo(e) {
+    const file = e.target.files[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = ev => setForm(f => ({ ...f, clinica_logo: ev.target.result }))
+    reader.readAsDataURL(file)
+    e.target.value = ''
+  }
 
   function onChange(e) {
     setForm(f => ({ ...f, [e.target.name]: e.target.value }))
@@ -177,6 +188,45 @@ function TabClinica({ onSalvo }) {
           <div className="grid grid-cols-2 gap-3">
             <Campo label="CNPJ" name="clinica_cnpj" valor={form.clinica_cnpj} onChange={onChange} placeholder="00.000.000/0000-00" />
             <Campo label="CRMV" name="clinica_crmv" valor={form.clinica_crmv} onChange={onChange} placeholder="CRMV-XX 000000" />
+          </div>
+
+          {/* Logo */}
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1.5">Logo da clínica (aparece nas impressões)</label>
+            <div className="flex items-center gap-4">
+              {form.clinica_logo ? (
+                <div className="relative">
+                  <img src={form.clinica_logo} alt="Logo" className="w-20 h-20 rounded-xl object-contain border border-slate-200 bg-slate-50 p-1" />
+                  <button
+                    onClick={() => setForm(f => ({ ...f, clinica_logo: '' }))}
+                    className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 transition-colors"
+                  >
+                    <Trash2 size={10} />
+                  </button>
+                </div>
+              ) : (
+                <div className="w-20 h-20 rounded-xl border-2 border-dashed border-slate-200 flex items-center justify-center bg-slate-50">
+                  <ImagePlus size={22} className="text-slate-300" />
+                </div>
+              )}
+              <div>
+                <input
+                  ref={inputLogoRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={selecionarLogo}
+                  className="hidden"
+                />
+                <button
+                  onClick={() => inputLogoRef.current?.click()}
+                  className="flex items-center gap-2 px-4 py-2 border border-slate-200 rounded-xl text-sm text-slate-600 hover:bg-slate-50 transition-colors"
+                >
+                  <Upload size={14} />
+                  {form.clinica_logo ? 'Trocar logo' : 'Escolher imagem'}
+                </button>
+                <p className="text-xs text-slate-400 mt-1.5">PNG, JPG ou SVG. Recomendado: fundo transparente.</p>
+              </div>
+            </div>
           </div>
         </div>
 

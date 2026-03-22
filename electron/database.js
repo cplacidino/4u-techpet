@@ -46,6 +46,7 @@ function connect(app) {
   db.pragma('synchronous = NORMAL') // Balanço entre velocidade e segurança
 
   criarTabelas()
+  migrarTabelas()
 
   console.log(`[DB] Banco conectado em: ${dbPath}`)
   return db
@@ -357,7 +358,124 @@ function criarTabelas() {
     CREATE INDEX IF NOT EXISTS idx_prescricoes_pet   ON prescricoes(id_pet);
     CREATE INDEX IF NOT EXISTS idx_itens_prescricao  ON itens_prescricao(id_prescricao);
     CREATE INDEX IF NOT EXISTS idx_exames_pet        ON exames(id_pet);
+
+    -- Contas a receber (fiado)
+    CREATE TABLE IF NOT EXISTS contas_receber (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      id_dono         INTEGER NOT NULL,
+      descricao       TEXT    NOT NULL,
+      valor_total     REAL    NOT NULL,
+      valor_pago      REAL    NOT NULL DEFAULT 0,
+      data_emissao    TEXT    NOT NULL,
+      data_vencimento TEXT,
+      status          TEXT    NOT NULL DEFAULT 'pendente',
+      origem          TEXT    NOT NULL DEFAULT 'manual',
+      id_venda        INTEGER,
+      id_agendamento  INTEGER,
+      observacoes     TEXT,
+      criado_em       DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (id_dono)        REFERENCES donos(id)        ON DELETE RESTRICT,
+      FOREIGN KEY (id_venda)       REFERENCES vendas(id)       ON DELETE SET NULL,
+      FOREIGN KEY (id_agendamento) REFERENCES agendamentos(id) ON DELETE SET NULL
+    );
+
+    -- Histórico de pagamentos do fiado
+    CREATE TABLE IF NOT EXISTS pagamentos_fiado (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      id_conta    INTEGER NOT NULL,
+      valor       REAL    NOT NULL,
+      data        TEXT    NOT NULL,
+      observacoes TEXT,
+      criado_em   DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (id_conta) REFERENCES contas_receber(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_contas_dono   ON contas_receber(id_dono);
+    CREATE INDEX IF NOT EXISTS idx_contas_status ON contas_receber(status);
+    CREATE INDEX IF NOT EXISTS idx_pgtos_conta   ON pagamentos_fiado(id_conta);
+
+    -- ── MÓDULO PLANOS ──────────────────────────────────────
+
+    -- Tipos/modelos de plano (templates reutilizáveis)
+    CREATE TABLE IF NOT EXISTS plano_tipos (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      nome        TEXT    NOT NULL,
+      descricao   TEXT,
+      valor       REAL    NOT NULL DEFAULT 0,
+      ativo       INTEGER DEFAULT 1,
+      criado_em   DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- Serviços incluídos em cada tipo de plano
+    CREATE TABLE IF NOT EXISTS plano_tipo_itens (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      id_plano_tipo  INTEGER NOT NULL,
+      servico        TEXT    NOT NULL,
+      quantidade     INTEGER NOT NULL DEFAULT 1,
+      FOREIGN KEY (id_plano_tipo) REFERENCES plano_tipos(id) ON DELETE CASCADE
+    );
+
+    -- Assinaturas: qual cliente tem qual plano
+    CREATE TABLE IF NOT EXISTS plano_assinaturas (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      id_dono        INTEGER NOT NULL,
+      id_pet         INTEGER,
+      id_plano_tipo  INTEGER NOT NULL,
+      data_inicio    TEXT    NOT NULL,
+      dia_vencimento INTEGER NOT NULL DEFAULT 1,
+      status         TEXT    NOT NULL DEFAULT 'ativo',
+      observacoes    TEXT,
+      criado_em      DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (id_dono)       REFERENCES donos(id)       ON DELETE RESTRICT,
+      FOREIGN KEY (id_pet)        REFERENCES pets(id)        ON DELETE SET NULL,
+      FOREIGN KEY (id_plano_tipo) REFERENCES plano_tipos(id) ON DELETE RESTRICT
+    );
+
+    -- Ciclos mensais de cobrança
+    CREATE TABLE IF NOT EXISTS plano_ciclos (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      id_assinatura   INTEGER NOT NULL,
+      competencia     TEXT    NOT NULL,
+      data_vencimento TEXT    NOT NULL,
+      data_pagamento  TEXT,
+      valor           REAL    NOT NULL,
+      status          TEXT    NOT NULL DEFAULT 'pendente',
+      id_financeiro   INTEGER,
+      criado_em       DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (id_assinatura) REFERENCES plano_assinaturas(id) ON DELETE CASCADE,
+      FOREIGN KEY (id_financeiro) REFERENCES financeiro(id)        ON DELETE SET NULL
+    );
+
+    -- Usos de serviços dentro de um ciclo
+    CREATE TABLE IF NOT EXISTS plano_usos (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      id_ciclo        INTEGER NOT NULL,
+      servico         TEXT    NOT NULL,
+      id_agendamento  INTEGER,
+      data_uso        TEXT    NOT NULL,
+      observacoes     TEXT,
+      criado_em       DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (id_ciclo)       REFERENCES plano_ciclos(id)  ON DELETE CASCADE,
+      FOREIGN KEY (id_agendamento) REFERENCES agendamentos(id)  ON DELETE SET NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_plano_assin_dono  ON plano_assinaturas(id_dono);
+    CREATE INDEX IF NOT EXISTS idx_plano_ciclos_assin ON plano_ciclos(id_assinatura);
+    CREATE INDEX IF NOT EXISTS idx_plano_usos_ciclo  ON plano_usos(id_ciclo);
   `)
+}
+
+// Migração segura: adiciona colunas novas em tabelas existentes
+function migrarTabelas() {
+  const novasColunas = [
+    ['vendas',        'tipo_pagamento TEXT DEFAULT "vista"'],
+    ['vendas',        'id_conta_receber INTEGER'],
+    ['agendamentos',  'tipo_pagamento TEXT DEFAULT "vista"'],
+    ['agendamentos',  'id_conta_receber INTEGER'],
+  ]
+  for (const [tabela, coluna] of novasColunas) {
+    try { db.exec(`ALTER TABLE ${tabela} ADD COLUMN ${coluna}`) } catch (_) {}
+  }
 }
 
 // ──────────────────────────────────────────────────────────
@@ -1478,15 +1596,27 @@ const vendas = {
         `).run(item.id_produto, item.quantidade, `Venda #${id_venda}`)
       }
 
-      // Lançar no financeiro
       const hoje = new Date().toISOString().split('T')[0]
-      const resF = db.prepare(`
-        INSERT INTO financeiro (descricao, valor, tipo, data)
-        VALUES (?, ?, 'receita', ?)
-      `).run(`Venda #${id_venda}`, d.total_final, hoje)
+      const tipoPgto = d.tipo_pagamento || 'vista'
 
-      // Vincular financeiro à venda
-      db.prepare(`UPDATE vendas SET id_financeiro = ? WHERE id = ?`).run(resF.lastInsertRowid, id_venda)
+      // Atualizar tipo_pagamento na venda
+      db.prepare(`UPDATE vendas SET tipo_pagamento = ? WHERE id = ?`).run(tipoPgto, id_venda)
+
+      if (tipoPgto === 'vista') {
+        // À vista: lança no financeiro imediatamente
+        const resF = db.prepare(`
+          INSERT INTO financeiro (descricao, valor, tipo, data)
+          VALUES (?, ?, 'receita', ?)
+        `).run(`Venda #${id_venda}`, d.total_final, hoje)
+        db.prepare(`UPDATE vendas SET id_financeiro = ? WHERE id = ?`).run(resF.lastInsertRowid, id_venda)
+      } else {
+        // A prazo: cria conta a receber (fiado)
+        const resCR = db.prepare(`
+          INSERT INTO contas_receber (id_dono, descricao, valor_total, valor_pago, data_emissao, data_vencimento, status, origem, id_venda)
+          VALUES (?, ?, ?, 0, ?, ?, 'pendente', 'venda', ?)
+        `).run(d.id_dono || null, `Venda #${id_venda}`, d.total_final, hoje, d.data_vencimento || null, id_venda)
+        db.prepare(`UPDATE vendas SET id_conta_receber = ? WHERE id = ?`).run(resCR.lastInsertRowid, id_venda)
+      }
 
       // Retornar a venda com itens (não usa vendas.buscarPorId para evitar aninhamento de transação)
       const venda = db.prepare(`
@@ -1569,6 +1699,357 @@ const vendas = {
   },
 }
 
+// ──────────────────────────────────────────────────────────
+// CONTAS A RECEBER (FIADO)
+// ──────────────────────────────────────────────────────────
+
+const contasReceber = {
+
+  criar(dados) {
+    const hoje = new Date().toISOString().slice(0, 10)
+    const res = db.prepare(`
+      INSERT INTO contas_receber
+        (id_dono, descricao, valor_total, valor_pago, data_emissao, data_vencimento, status, origem, id_venda, id_agendamento, observacoes)
+      VALUES
+        (@id_dono, @descricao, @valor_total, 0, @data_emissao, @data_vencimento, 'pendente', @origem, @id_venda, @id_agendamento, @observacoes)
+    `).run({
+      data_emissao:    hoje,
+      origem:          'manual',
+      id_venda:        null,
+      id_agendamento:  null,
+      observacoes:     null,
+      data_vencimento: null,
+      ...dados,
+    })
+    return contasReceber.buscarPorId(res.lastInsertRowid)
+  },
+
+  buscarPorId(id) {
+    return db.prepare(`
+      SELECT cr.*, d.nome AS nome_cliente, d.telefone AS telefone_cliente
+      FROM contas_receber cr
+      LEFT JOIN donos d ON cr.id_dono = d.id
+      WHERE cr.id = ?
+    `).get(id)
+  },
+
+  _atualizarAtrasados() {
+    const hoje = new Date().toISOString().slice(0, 10)
+    db.prepare(`
+      UPDATE contas_receber SET status = 'atrasado'
+      WHERE status = 'pendente' AND data_vencimento IS NOT NULL AND data_vencimento < ?
+    `).run(hoje)
+  },
+
+  listar(filtro = 'todos') {
+    contasReceber._atualizarAtrasados()
+    const hoje = new Date().toISOString().slice(0, 10)
+    const wheres = {
+      pendente: "WHERE cr.status = 'pendente'",
+      atrasado: "WHERE cr.status = 'atrasado'",
+      pago:     "WHERE cr.status = 'pago'",
+      aberto:   "WHERE cr.status IN ('pendente','atrasado')",
+      hoje:     `WHERE cr.data_emissao = '${hoje}'`,
+    }
+    const where = wheres[filtro] || ''
+    return db.prepare(`
+      SELECT cr.*, d.nome AS nome_cliente, d.telefone AS telefone_cliente
+      FROM contas_receber cr
+      LEFT JOIN donos d ON cr.id_dono = d.id
+      ${where}
+      ORDER BY
+        CASE cr.status WHEN 'atrasado' THEN 0 WHEN 'pendente' THEN 1 ELSE 2 END,
+        cr.data_vencimento ASC
+    `).all()
+  },
+
+  buscarPorCliente(id_dono) {
+    contasReceber._atualizarAtrasados()
+    return db.prepare(`
+      SELECT * FROM contas_receber WHERE id_dono = ? ORDER BY criado_em DESC
+    `).all(id_dono)
+  },
+
+  registrarPagamento(id_conta, valor, observacoes) {
+    return db.transaction(() => {
+      const conta = contasReceber.buscarPorId(id_conta)
+      if (!conta) throw new Error('Conta não encontrada')
+      const hoje     = new Date().toISOString().slice(0, 10)
+      const novoPago = Number(conta.valor_pago) + Number(valor)
+      const quitou   = novoPago >= conta.valor_total
+
+      db.prepare(`
+        INSERT INTO pagamentos_fiado (id_conta, valor, data, observacoes)
+        VALUES (?, ?, ?, ?)
+      `).run(id_conta, valor, hoje, observacoes || null)
+
+      const novoStatus = quitou ? 'pago' : (conta.status === 'atrasado' ? 'atrasado' : 'pendente')
+      db.prepare(`UPDATE contas_receber SET valor_pago = ?, status = ? WHERE id = ?`)
+        .run(novoPago, novoStatus, id_conta)
+
+      // Só entra no financeiro quando quitado completamente
+      if (quitou) {
+        db.prepare(`
+          INSERT INTO financeiro (descricao, valor, tipo, data)
+          VALUES (?, ?, 'receita', ?)
+        `).run(conta.descricao, conta.valor_total, hoje)
+      }
+
+      return contasReceber.buscarPorId(id_conta)
+    })()
+  },
+
+  buscarPagamentos(id_conta) {
+    return db.prepare(`
+      SELECT * FROM pagamentos_fiado WHERE id_conta = ? ORDER BY data DESC, criado_em DESC
+    `).all(id_conta)
+  },
+
+  totalEmAberto() {
+    contasReceber._atualizarAtrasados()
+    return db.prepare(`
+      SELECT
+        COUNT(*)                                                              AS total_contas,
+        COALESCE(SUM(valor_total - valor_pago), 0)                           AS total_aberto,
+        COUNT(CASE WHEN status = 'atrasado' THEN 1 END)                      AS total_atrasados,
+        COALESCE(SUM(CASE WHEN status = 'atrasado' THEN valor_total - valor_pago ELSE 0 END), 0) AS valor_atrasado
+      FROM contas_receber WHERE status != 'pago'
+    `).get()
+  },
+
+  deletar(id) {
+    return db.prepare('DELETE FROM contas_receber WHERE id = ?').run(id)
+  },
+}
+
+// ──────────────────────────────────────────────────────────
+// PLANOS
+// ──────────────────────────────────────────────────────────
+
+const planos = {
+
+  // ── Tipos de plano ──────────────────────────────────────
+
+  criarTipo(dados) {
+    return db.transaction(function(d) {
+      const res = db.prepare(`
+        INSERT INTO plano_tipos (nome, descricao, valor) VALUES (@nome, @descricao, @valor)
+      `).run(d)
+      const id = res.lastInsertRowid
+      for (const item of (d.itens || [])) {
+        db.prepare(`INSERT INTO plano_tipo_itens (id_plano_tipo, servico, quantidade) VALUES (?, ?, ?)`)
+          .run(id, item.servico, item.quantidade)
+      }
+      return planos.buscarTipoPorId(id)
+    })(dados)
+  },
+
+  listarTipos() {
+    const tipos = db.prepare('SELECT * FROM plano_tipos ORDER BY nome').all()
+    for (const t of tipos) {
+      t.itens = db.prepare('SELECT * FROM plano_tipo_itens WHERE id_plano_tipo = ?').all(t.id)
+    }
+    return tipos
+  },
+
+  buscarTipoPorId(id) {
+    const t = db.prepare('SELECT * FROM plano_tipos WHERE id = ?').get(id)
+    if (t) t.itens = db.prepare('SELECT * FROM plano_tipo_itens WHERE id_plano_tipo = ?').all(t.id)
+    return t
+  },
+
+  editarTipo(id, dados) {
+    return db.transaction(function(d) {
+      db.prepare(`UPDATE plano_tipos SET nome = @nome, descricao = @descricao, valor = @valor, ativo = @ativo WHERE id = @id`)
+        .run({ ...d, id })
+      db.prepare('DELETE FROM plano_tipo_itens WHERE id_plano_tipo = ?').run(id)
+      for (const item of (d.itens || [])) {
+        db.prepare('INSERT INTO plano_tipo_itens (id_plano_tipo, servico, quantidade) VALUES (?, ?, ?)')
+          .run(id, item.servico, item.quantidade)
+      }
+      return planos.buscarTipoPorId(id)
+    })(dados)
+  },
+
+  deletarTipo(id) {
+    return db.prepare('DELETE FROM plano_tipos WHERE id = ?').run(id)
+  },
+
+  // ── Assinaturas ─────────────────────────────────────────
+
+  criarAssinatura(dados) {
+    return db.transaction(function(d) {
+      const res = db.prepare(`
+        INSERT INTO plano_assinaturas (id_dono, id_pet, id_plano_tipo, data_inicio, dia_vencimento, observacoes)
+        VALUES (@id_dono, @id_pet, @id_plano_tipo, @data_inicio, @dia_vencimento, @observacoes)
+      `).run(d)
+      const id = res.lastInsertRowid
+      const tipo = planos.buscarTipoPorId(d.id_plano_tipo)
+      const hoje = new Date()
+      const ano = hoje.getFullYear()
+      const mes = hoje.getMonth() + 1
+      const competencia = `${ano}-${String(mes).padStart(2, '0')}`
+      const diaVenc = Math.min(d.dia_vencimento, new Date(ano, mes, 0).getDate())
+      const dataVenc = `${ano}-${String(mes).padStart(2, '0')}-${String(diaVenc).padStart(2, '0')}`
+      db.prepare(`INSERT INTO plano_ciclos (id_assinatura, competencia, data_vencimento, valor, status) VALUES (?, ?, ?, ?, 'pendente')`)
+        .run(id, competencia, dataVenc, tipo.valor)
+      return planos.buscarAssinaturaPorId(id)
+    })(dados)
+  },
+
+  listarAssinaturas() {
+    return db.prepare(`
+      SELECT a.*, d.nome as nome_dono, d.telefone as telefone_dono,
+             p.nome as nome_pet, p.especie, t.nome as nome_plano, t.valor as valor_plano
+      FROM plano_assinaturas a
+      JOIN donos d ON a.id_dono = d.id
+      LEFT JOIN pets p ON a.id_pet = p.id
+      JOIN plano_tipos t ON a.id_plano_tipo = t.id
+      ORDER BY a.criado_em DESC
+    `).all()
+  },
+
+  buscarAssinaturaPorId(id) {
+    const a = db.prepare(`
+      SELECT a.*, d.nome as nome_dono, d.telefone as telefone_dono,
+             p.nome as nome_pet, p.especie, t.nome as nome_plano, t.valor as valor_plano
+      FROM plano_assinaturas a
+      JOIN donos d ON a.id_dono = d.id
+      LEFT JOIN pets p ON a.id_pet = p.id
+      JOIN plano_tipos t ON a.id_plano_tipo = t.id
+      WHERE a.id = ?
+    `).get(id)
+    if (a) {
+      a.ciclos = planos.listarCiclosPorAssinatura(id)
+      a.tipo = planos.buscarTipoPorId(a.id_plano_tipo)
+    }
+    return a
+  },
+
+  alterarStatus(id, status) {
+    db.prepare('UPDATE plano_assinaturas SET status = ? WHERE id = ?').run(status, id)
+    return planos.buscarAssinaturaPorId(id)
+  },
+
+  deletarAssinatura(id) {
+    return db.prepare('DELETE FROM plano_assinaturas WHERE id = ?').run(id)
+  },
+
+  // ── Ciclos ──────────────────────────────────────────────
+
+  listarCiclosPorAssinatura(id_assinatura) {
+    return db.prepare(`
+      SELECT c.*, (SELECT COUNT(*) FROM plano_usos u WHERE u.id_ciclo = c.id) as total_usos
+      FROM plano_ciclos c WHERE c.id_assinatura = ? ORDER BY c.competencia DESC
+    `).all(id_assinatura)
+  },
+
+  cicloAtual(id_assinatura) {
+    const hoje = new Date()
+    const competencia = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}`
+    return db.prepare('SELECT * FROM plano_ciclos WHERE id_assinatura = ? AND competencia = ?')
+      .get(id_assinatura, competencia)
+  },
+
+  confirmarPagamento(id_ciclo) {
+    return db.transaction(function() {
+      const ciclo = db.prepare('SELECT * FROM plano_ciclos WHERE id = ?').get(id_ciclo)
+      const assin = db.prepare('SELECT * FROM plano_assinaturas WHERE id = ?').get(ciclo.id_assinatura)
+      const tipo = planos.buscarTipoPorId(assin.id_plano_tipo)
+      const hoje = new Date().toISOString().split('T')[0]
+
+      const resF = db.prepare(`INSERT INTO financeiro (descricao, valor, tipo, data) VALUES (?, ?, 'receita', ?)`)
+        .run(`Plano: ${tipo.nome}`, ciclo.valor, hoje)
+
+      db.prepare(`UPDATE plano_ciclos SET status = 'pago', data_pagamento = ?, id_financeiro = ? WHERE id = ?`)
+        .run(hoje, resF.lastInsertRowid, id_ciclo)
+
+      // Gera próximo ciclo
+      const [ano, mes] = ciclo.competencia.split('-').map(Number)
+      let pAno = ano, pMes = mes + 1
+      if (pMes > 12) { pMes = 1; pAno++ }
+      const proxComp = `${pAno}-${String(pMes).padStart(2, '0')}`
+      const jaExiste = db.prepare('SELECT id FROM plano_ciclos WHERE id_assinatura = ? AND competencia = ?')
+        .get(ciclo.id_assinatura, proxComp)
+      if (!jaExiste && assin.status === 'ativo') {
+        const diaVenc = Math.min(assin.dia_vencimento, new Date(pAno, pMes, 0).getDate())
+        const dataVenc = `${pAno}-${String(pMes).padStart(2, '0')}-${String(diaVenc).padStart(2, '0')}`
+        db.prepare(`INSERT INTO plano_ciclos (id_assinatura, competencia, data_vencimento, valor, status) VALUES (?, ?, ?, ?, 'pendente')`)
+          .run(ciclo.id_assinatura, proxComp, dataVenc, tipo.valor)
+      }
+      return { ok: true }
+    })()
+  },
+
+  // ── Usos ────────────────────────────────────────────────
+
+  registrarUso(dados) {
+    const res = db.prepare(`
+      INSERT INTO plano_usos (id_ciclo, servico, id_agendamento, data_uso, observacoes)
+      VALUES (@id_ciclo, @servico, @id_agendamento, @data_uso, @observacoes)
+    `).run(dados)
+    return { id: res.lastInsertRowid }
+  },
+
+  listarUsosPorCiclo(id_ciclo) {
+    return db.prepare(`
+      SELECT u.* FROM plano_usos u WHERE u.id_ciclo = ? ORDER BY u.data_uso DESC
+    `).all(id_ciclo)
+  },
+
+  deletarUso(id) {
+    return db.prepare('DELETE FROM plano_usos WHERE id = ?').run(id)
+  },
+
+  // ── Resumo ciclo atual ────────────────────────────────
+
+  resumoCicloAtual(id_assinatura) {
+    const ciclo = planos.cicloAtual(id_assinatura)
+    if (!ciclo) return null
+    const assin = db.prepare('SELECT * FROM plano_assinaturas WHERE id = ?').get(id_assinatura)
+    const tipo = planos.buscarTipoPorId(assin.id_plano_tipo)
+    const usos = planos.listarUsosPorCiclo(ciclo.id)
+    const usoPorServico = {}
+    for (const u of usos) usoPorServico[u.servico] = (usoPorServico[u.servico] || 0) + 1
+    const resumo = tipo.itens.map(item => ({
+      servico: item.servico,
+      quantidade_plano: item.quantidade,
+      quantidade_usada: usoPorServico[item.servico] || 0,
+      quantidade_restante: item.quantidade - (usoPorServico[item.servico] || 0),
+    }))
+    return { ciclo, resumo, usos }
+  },
+
+  // Para uso nos agendamentos: assinaturas ativas de um dono
+  assinaturasAtivasDono(id_dono) {
+    const rows = db.prepare(`
+      SELECT a.*, t.nome as nome_plano FROM plano_assinaturas a
+      JOIN plano_tipos t ON a.id_plano_tipo = t.id
+      WHERE a.id_dono = ? AND a.status = 'ativo'
+    `).all(id_dono)
+    for (const r of rows) {
+      r.tipo = planos.buscarTipoPorId(r.id_plano_tipo)
+      r.resumo_ciclo = planos.resumoCicloAtual(r.id)
+    }
+    return rows
+  },
+
+  // Para dashboard: alertas de vencimento
+  alertas() {
+    const em5dias = new Date(Date.now() + 5 * 24 * 3600 * 1000).toISOString().split('T')[0]
+    return db.prepare(`
+      SELECT c.*, a.id_dono, a.id_pet, d.nome as nome_dono, p.nome as nome_pet, t.nome as nome_plano
+      FROM plano_ciclos c
+      JOIN plano_assinaturas a ON c.id_assinatura = a.id
+      JOIN donos d ON a.id_dono = d.id
+      LEFT JOIN pets p ON a.id_pet = p.id
+      JOIN plano_tipos t ON a.id_plano_tipo = t.id
+      WHERE c.status = 'pendente' AND a.status = 'ativo' AND c.data_vencimento <= ?
+      ORDER BY c.data_vencimento ASC
+    `).all(em5dias)
+  },
+}
+
 function fechar() {
   if (db && db.open) db.close()
 }
@@ -1577,4 +2058,4 @@ function getDbPath() {
   return dbPath || ''
 }
 
-module.exports = { connect, fechar, getDbPath, donos, pets, agendamentos, vacinas, financeiro, pesoHistorico, estoque, veterinarios, consultas, internacoes, cirurgias, prescricoes, configuracoes, exames, vendas }
+module.exports = { connect, fechar, getDbPath, donos, pets, agendamentos, vacinas, financeiro, pesoHistorico, estoque, veterinarios, consultas, internacoes, cirurgias, prescricoes, configuracoes, exames, vendas, contasReceber, planos }

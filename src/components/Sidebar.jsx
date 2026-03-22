@@ -3,7 +3,7 @@ import {
   LayoutDashboard, PawPrint, CalendarDays,
   Syringe, Wallet, Settings, Package,
   ChevronLeft, ChevronRight, Circle,
-  Stethoscope, BedDouble, Scissors, ClipboardList, UserRound, ShoppingCart
+  Stethoscope, BedDouble, Scissors, ClipboardList, UserRound, ShoppingCart, HandCoins, BadgeCheck
 } from 'lucide-react'
 import { useConfig } from '../contexts/ConfigContext'
 
@@ -15,6 +15,8 @@ const TODOS_NAV = [
   { label: 'Vacinas',      icon: Syringe,         path: '/vacinas',      modKey: 'mod_vacinas' },
   { label: 'Financeiro',   icon: Wallet,          path: '/financeiro',   modKey: 'mod_financeiro' },
   { label: 'Estoque',      icon: Package,         path: '/estoque',      modKey: 'mod_estoque' },
+  { label: 'Fiado',        icon: HandCoins,       path: '/fiado',        modKey: 'mod_vendas' },
+  { label: 'Planos',       icon: BadgeCheck,      path: '/planos',       modKey: null },
 ]
 
 const TODOS_CLINICA = [

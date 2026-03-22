@@ -1,6 +1,6 @@
 {
   "name": "4u-techpet",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "Sistema de gestão para clínica veterinária e petshop — 4u Technology",
   "author": "4u Technology",
   "main": "electron/main.js",
@@ -57,7 +57,8 @@
     "publish": {
       "provider": "github",
       "owner": "cplacidino",
-      "repo": "4u-techpet"
+      "repo": "4u-techpet",
+      "releaseType": "release"
     }
   },
   "devDependencies": {

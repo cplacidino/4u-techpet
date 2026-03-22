@@ -180,6 +180,18 @@ contextBridge.exposeInMainWorld('api', {
     totalMes:    ()             => ipcRenderer.invoke('vendas:totalMes'),
   },
 
+  // ── FIADO (Contas a Receber) ─────────────────────────────
+  fiado: {
+    criar:              (dados)          => ipcRenderer.invoke('fiado:criar', dados),
+    listar:             (filtro)         => ipcRenderer.invoke('fiado:listar', filtro),
+    buscarPorId:        (id)             => ipcRenderer.invoke('fiado:buscarPorId', id),
+    buscarPorCliente:   (id_dono)        => ipcRenderer.invoke('fiado:buscarPorCliente', id_dono),
+    registrarPagamento: (id, valor, obs) => ipcRenderer.invoke('fiado:registrarPagamento', { id, valor, obs }),
+    buscarPagamentos:   (id_conta)       => ipcRenderer.invoke('fiado:buscarPagamentos', id_conta),
+    totalEmAberto:      ()               => ipcRenderer.invoke('fiado:totalEmAberto'),
+    deletar:            (id)             => ipcRenderer.invoke('fiado:deletar', id),
+  },
+
   // ── CONFIGURAÇÕES (Admin) ────────────────────────────────
   configuracoes: {
     get:     (chave)         => ipcRenderer.invoke('configuracoes:get', chave),
@@ -220,5 +232,33 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.removeAllListeners('update:baixado')
       ipcRenderer.removeAllListeners('update:erro')
     },
+  },
+
+  // ── PLANOS ───────────────────────────────────────────────
+  planos: {
+    criarTipo:          (dados)        => ipcRenderer.invoke('planos:criarTipo', dados),
+    listarTipos:        ()             => ipcRenderer.invoke('planos:listarTipos'),
+    editarTipo:         (id, dados)    => ipcRenderer.invoke('planos:editarTipo', { id, dados }),
+    deletarTipo:        (id)           => ipcRenderer.invoke('planos:deletarTipo', id),
+    criarAssinatura:    (dados)        => ipcRenderer.invoke('planos:criarAssinatura', dados),
+    listarAssinaturas:  ()             => ipcRenderer.invoke('planos:listarAssinaturas'),
+    buscarAssinatura:   (id)           => ipcRenderer.invoke('planos:buscarAssinatura', id),
+    alterarStatus:      (id, status)   => ipcRenderer.invoke('planos:alterarStatus', { id, status }),
+    deletarAssinatura:  (id)           => ipcRenderer.invoke('planos:deletarAssinatura', id),
+    confirmarPagamento: (id_ciclo)     => ipcRenderer.invoke('planos:confirmarPagamento', id_ciclo),
+    registrarUso:       (dados)        => ipcRenderer.invoke('planos:registrarUso', dados),
+    listarUsosCiclo:    (id_ciclo)     => ipcRenderer.invoke('planos:listarUsosCiclo', id_ciclo),
+    deletarUso:         (id)           => ipcRenderer.invoke('planos:deletarUso', id),
+    resumoCicloAtual:   (id_assin)     => ipcRenderer.invoke('planos:resumoCicloAtual', id_assin),
+    assinaturasAtivas:  (id_dono)      => ipcRenderer.invoke('planos:assinaturasAtivas', id_dono),
+    alertas:            ()             => ipcRenderer.invoke('planos:alertas'),
+  },
+
+  // ── AUTENTICAÇÃO ─────────────────────────────────────────
+  auth: {
+    login:      (email, senha) => ipcRenderer.invoke('auth:login', { email, senha }),
+    verificar:  ()             => ipcRenderer.invoke('auth:verificar'),
+    logout:     ()             => ipcRenderer.invoke('auth:logout'),
+    tokenSalvo: ()             => ipcRenderer.invoke('auth:tokenSalvo'),
   },
 })

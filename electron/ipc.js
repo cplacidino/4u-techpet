@@ -11,11 +11,25 @@
 //   Resultado volta para o React automaticamente
 // ============================================================
 
-const { ipcMain, dialog, shell } = require('electron')
+const { ipcMain, dialog, shell, app } = require('electron')
 const path   = require('path')
 const fs     = require('fs')
 const db     = require('./database')
 const backup = require('./backup')
+
+// ── Auth helpers ─────────────────────────────────────────────────────────────
+const AUTH_FILE = path.join(app.getPath('userData'), '4utechpet-auth.json')
+const API_URL   = 'https://fouru-auth-api.onrender.com'
+
+function lerAuth() {
+  try { return JSON.parse(fs.readFileSync(AUTH_FILE, 'utf8')) } catch { return null }
+}
+function salvarAuth(dados) {
+  fs.writeFileSync(AUTH_FILE, JSON.stringify(dados), 'utf8')
+}
+function limparAuth() {
+  try { fs.unlinkSync(AUTH_FILE) } catch {}
+}
 
 function registrarHandlers() {
 
@@ -267,6 +281,18 @@ function registrarHandlers() {
   })
 
   // ────────────────────────────────────────
+  // CONTAS A RECEBER (FIADO)
+  // ────────────────────────────────────────
+  ipcMain.handle('fiado:criar',              (_, dados)               => db.contasReceber.criar(dados))
+  ipcMain.handle('fiado:listar',             (_, filtro)              => db.contasReceber.listar(filtro))
+  ipcMain.handle('fiado:buscarPorId',        (_, id)                  => db.contasReceber.buscarPorId(id))
+  ipcMain.handle('fiado:buscarPorCliente',   (_, id_dono)             => db.contasReceber.buscarPorCliente(id_dono))
+  ipcMain.handle('fiado:registrarPagamento', (_, { id, valor, obs })  => db.contasReceber.registrarPagamento(id, valor, obs))
+  ipcMain.handle('fiado:buscarPagamentos',   (_, id_conta)            => db.contasReceber.buscarPagamentos(id_conta))
+  ipcMain.handle('fiado:totalEmAberto',      ()                       => db.contasReceber.totalEmAberto())
+  ipcMain.handle('fiado:deletar',            (_, id)                  => db.contasReceber.deletar(id))
+
+  // ────────────────────────────────────────
   // CONFIGURAÇÕES (Admin)
   // ────────────────────────────────────────
   ipcMain.handle('configuracoes:get',    (_, chave)           => db.configuracoes.get(chave))
@@ -318,6 +344,94 @@ function registrarHandlers() {
     if (canceled || !filePaths.length) return { canceled: true }
     return backup.restaurarArquivo(filePaths[0], db.fechar)
   })
+  // ────────────────────────────────────────
+  // PLANOS
+  // ────────────────────────────────────────
+  ipcMain.handle('planos:criarTipo',          (_, dados)      => db.planos.criarTipo(dados))
+  ipcMain.handle('planos:listarTipos',        ()              => db.planos.listarTipos())
+  ipcMain.handle('planos:editarTipo',         (_, { id, dados }) => db.planos.editarTipo(id, dados))
+  ipcMain.handle('planos:deletarTipo',        (_, id)         => db.planos.deletarTipo(id))
+  ipcMain.handle('planos:criarAssinatura',    (_, dados)      => db.planos.criarAssinatura(dados))
+  ipcMain.handle('planos:listarAssinaturas',  ()              => db.planos.listarAssinaturas())
+  ipcMain.handle('planos:buscarAssinatura',   (_, id)         => db.planos.buscarAssinaturaPorId(id))
+  ipcMain.handle('planos:alterarStatus',      (_, { id, status }) => db.planos.alterarStatus(id, status))
+  ipcMain.handle('planos:deletarAssinatura',  (_, id)         => db.planos.deletarAssinatura(id))
+  ipcMain.handle('planos:confirmarPagamento', (_, id_ciclo)   => db.planos.confirmarPagamento(id_ciclo))
+  ipcMain.handle('planos:registrarUso',       (_, dados)      => db.planos.registrarUso(dados))
+  ipcMain.handle('planos:listarUsosCiclo',    (_, id_ciclo)   => db.planos.listarUsosPorCiclo(id_ciclo))
+  ipcMain.handle('planos:deletarUso',         (_, id)         => db.planos.deletarUso(id))
+  ipcMain.handle('planos:resumoCicloAtual',   (_, id_assin)   => db.planos.resumoCicloAtual(id_assin))
+  ipcMain.handle('planos:assinaturasAtivas',  (_, id_dono)    => db.planos.assinaturasAtivasDono(id_dono))
+  ipcMain.handle('planos:alertas',            ()              => db.planos.alertas())
+
+  // ────────────────────────────────────────
+  // AUTENTICAÇÃO
+  // ────────────────────────────────────────
+
+  // Verifica se já tem token salvo localmente
+  ipcMain.handle('auth:tokenSalvo', () => {
+    const dados = lerAuth()
+    return dados ? { tem: true, email: dados.email, nome: dados.nome } : { tem: false }
+  })
+
+  // Faz login na API online
+  ipcMain.handle('auth:login', async (_, { email, senha }) => {
+    try {
+      const res = await fetch(`${API_URL}/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, senha }),
+      })
+      const dados = await res.json()
+      if (!res.ok) return { ok: false, erro: dados.erro || 'Erro ao fazer login' }
+
+      salvarAuth({
+        token:       dados.token,
+        nome:        dados.nome,
+        email,
+        salvoEm:     Date.now(),
+        verificadoEm: Date.now(),
+      })
+      return { ok: true, nome: dados.nome }
+    } catch {
+      return { ok: false, erro: 'Sem conexão com o servidor. Verifique sua internet.' }
+    }
+  })
+
+  // Verifica token (online ou cache de 24h)
+  ipcMain.handle('auth:verificar', async () => {
+    const dados = lerAuth()
+    if (!dados?.token) return { valido: false, motivo: 'Não autenticado' }
+
+    // Tenta verificar online
+    try {
+      const res = await fetch(`${API_URL}/verificar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: dados.token }),
+      })
+      const resp = await res.json()
+      if (!res.ok) {
+        limparAuth()
+        return { valido: false, motivo: resp.motivo || 'Acesso negado' }
+      }
+      // Atualiza timestamp de verificação
+      salvarAuth({ ...dados, verificadoEm: Date.now() })
+      return { valido: true, nome: resp.nome }
+    } catch {
+      // Offline — permite até 24h desde a última verificação bem-sucedida
+      const horas = (Date.now() - (dados.verificadoEm || 0)) / 3600000
+      if (horas < 24) return { valido: true, nome: dados.nome, offline: true }
+      return { valido: false, motivo: 'Sem conexão há mais de 24h. Conecte à internet para continuar.' }
+    }
+  })
+
+  // Logout
+  ipcMain.handle('auth:logout', () => {
+    limparAuth()
+    return { ok: true }
+  })
+
 }
 
 module.exports = { registrarHandlers }
