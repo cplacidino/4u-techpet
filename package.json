@@ -1,0 +1,85 @@
+{
+  "name": "4u-techpet",
+  "version": "1.0.0",
+  "description": "Sistema de gestão para clínica veterinária e petshop — 4u Technology",
+  "author": "4u Technology",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev:vite": "vite",
+    "dev:electron": "wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .",
+    "dev": "concurrently -n VITE,ELECTRON -c cyan,magenta \"npm run dev:vite\" \"npm run dev:electron\"",
+    "build": "vite build",
+    "dist": "npm run build && electron-builder",
+    "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "rebuild:new": "npx @electron/rebuild -f -w better-sqlite3",
+    "dist:publish": "npm run build && electron-builder --publish always"
+  },
+  "build": {
+    "appId": "com.4utechnology.4utechpet",
+    "productName": "4u TechPet",
+    "copyright": "Copyright © 2026 4u Technology",
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "4u TechPet"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "database",
+        "to": "database",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "publish": {
+      "provider": "github",
+      "owner": "cplacidino",
+      "repo": "4u-techpet"
+    }
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.7.2",
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.17",
+    "concurrently": "^8.2.2",
+    "cross-env": "^7.0.3",
+    "electron": "^28.2.0",
+    "electron-builder": "^24.9.1",
+    "postcss": "^8.4.33",
+    "tailwindcss": "^3.4.1",
+    "vite": "^5.0.12",
+    "wait-on": "^7.2.0"
+  },
+  "dependencies": {
+    "better-sqlite3": "^9.4.3",
+    "electron-updater": "^6.8.3",
+    "lucide-react": "^0.316.0",
+    "pdf-parse": "^2.4.5",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.22.0"
+  }
+}

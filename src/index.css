@@ -1,0 +1,106 @@
+/* Importa as classes do Tailwind CSS */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Fonte Inter (carregada pelo index.html) */
+@layer base {
+  body {
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Impede seleção de texto em elementos de interface (comportamento de app) */
+  * {
+    user-select: none;
+  }
+
+  /* Permite seleção onde faz sentido */
+  input, textarea, [contenteditable], p, span, td {
+    user-select: text;
+  }
+
+  /* Remove scrollbar do Electron no Windows */
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+  }
+
+  /* ── Dark mode: scrollbar ── */
+  .dark ::-webkit-scrollbar-thumb { background: #475569; }
+  .dark ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+}
+
+/* ── Dark mode: cards e superfícies ──────────────────────
+   Cobre os cards bg-white e bg-slate-50 das páginas
+   sem precisar tocar em cada componente individualmente.   */
+.dark .bg-white {
+  background-color: #1e293b;
+  border-color: #334155;
+}
+.dark .bg-slate-50:not(body):not(html) {
+  background-color: #0f172a;
+}
+
+/* Textos */
+.dark .text-slate-800 { color: #f1f5f9; }
+.dark .text-slate-700 { color: #e2e8f0; }
+.dark .text-slate-600 { color: #cbd5e1; }
+.dark .text-slate-500 { color: #94a3b8; }
+.dark .text-slate-400 { color: #64748b; }
+.dark .text-slate-300 { color: #475569; }
+
+/* Bordas */
+.dark .border-slate-100 { border-color: #334155; }
+.dark .border-slate-200 { border-color: #475569; }
+
+/* Hovers */
+.dark .hover\:bg-slate-50:hover  { background-color: #334155; }
+.dark .hover\:bg-slate-100:hover { background-color: #475569; }
+
+/* Inputs e textareas */
+.dark input:not([type="range"]),
+.dark textarea,
+.dark select {
+  background-color: #1e293b;
+  border-color: #475569;
+  color: #f1f5f9;
+}
+.dark input::placeholder,
+.dark textarea::placeholder {
+  color: #64748b;
+}
+
+/* Dividers */
+.dark .divide-slate-50  > * + * { border-color: #1e293b; }
+.dark .divide-slate-100 > * + * { border-color: #334155; }
+
+/* ── Impressão / Relatório PDF ───────────────────────────
+   Esconde tudo exceto o conteúdo do relatório ao imprimir. */
+@media print {
+  body * { visibility: hidden; }
+  #relatorio-print,
+  #relatorio-print * { visibility: visible; }
+  #relatorio-print {
+    position: fixed;
+    inset: 0;
+    background: white;
+    color: black;
+    padding: 2cm 2cm 2cm 2cm;
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 11pt;
+    z-index: 9999;
+  }
+  #relatorio-print .print-no-break { page-break-inside: avoid; }
+  @page { margin: 0; size: A4 portrait; }
+}

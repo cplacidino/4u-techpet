@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Copy-Item \"c:\\\\Users\\\\Christian\\\\Documents\\\\Projetos\\\\Clinica veterinária e petshop\\\\assets\\\\Ícon.ico\" \"c:\\\\Users\\\\Christian\\\\Documents\\\\Projetos\\\\Clinica veterinária e petshop\\\\assets\\\\icon.ico\")"
+    ]
+  }
+}
