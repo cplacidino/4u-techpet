@@ -594,7 +594,7 @@ function TabSistema() {
       <Secao titulo="Versão do sistema">
         <div className="space-y-1.5 text-sm text-slate-600">
           <div className="flex justify-between"><span>Sistema</span><span className="font-bold text-slate-800">4u TechPet</span></div>
-          <div className="flex justify-between"><span>Versão</span><span className="font-bold text-slate-800">1.0.0</span></div>
+          <div className="flex justify-between"><span>Versão</span><span className="font-bold text-slate-800">{window.api?.versoes?.app || '—'}</span></div>
           <div className="flex justify-between"><span>Plataforma</span><span className="font-bold text-slate-800">Electron + React + SQLite</span></div>
           <div className="flex justify-between"><span>Node</span><span className="font-bold text-slate-800">{window.api?.versoes?.node || '—'}</span></div>
           <div className="flex justify-between"><span>Electron</span><span className="font-bold text-slate-800">{window.api?.versoes?.electron || '—'}</span></div>

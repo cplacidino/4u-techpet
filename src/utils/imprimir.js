@@ -232,6 +232,83 @@ ${venda.observacoes ? `<div class="secao"><div class="secao-titulo">Observaçõe
 }
 
 // ══════════════════════════════════════════════════════════
+// ENTREGA
+// ══════════════════════════════════════════════════════════
+export function imprimirEntrega(entrega) {
+  const statusLabel = {
+    aguardando:   'Aguardando',
+    saiu:         'Saiu para entrega',
+    entregue:     'Entregue',
+    nao_entregue: 'Não entregue',
+  }[entrega.status] || entrega.status
+
+  const statusBadge = {
+    aguardando:   '<span class="badge badge-blue">Aguardando</span>',
+    saiu:         '<span class="badge badge-amber">Saiu para entrega</span>',
+    entregue:     '<span class="badge badge-green">Entregue</span>',
+    nao_entregue: '<span class="badge badge-red">Não entregue</span>',
+  }[entrega.status] || ''
+
+  const cliente = entrega.nome_dono || entrega.nome_cliente || '—'
+  const telefone = entrega.whatsapp_dono || entrega.telefone_dono || '—'
+
+  const itens = (entrega.itens || []).map(i => `
+    <tr>
+      <td>${i.nome_produto || '—'}</td>
+      <td>${i.quantidade || 1}</td>
+      <td>${fmt(i.preco_unit)}</td>
+      <td>${fmt(i.subtotal)}</td>
+    </tr>`).join('')
+
+  const corpo = `
+${cabecalho('Romaneio de Entrega', `Entrega #${entrega.id} · Venda #${entrega.id_venda}`)}
+
+<div class="secao">
+  <div class="secao-titulo">Dados da entrega</div>
+  <div class="grid2">
+    ${campo('Cliente', cliente)}
+    ${campo('Telefone', telefone)}
+  </div>
+  <div style="margin-top:10px">${campo('Endereço de entrega', entrega.endereco)}</div>
+  <div class="grid3" style="margin-top:10px">
+    ${campo('Responsável', entrega.responsavel || '—')}
+    ${campo('Status', statusLabel)}
+    ${campo('Taxa de entrega', entrega.taxa > 0 ? fmt(entrega.taxa) : 'Grátis')}
+  </div>
+  <div style="margin-top:8px">${statusBadge}</div>
+  ${entrega.saiu_em     ? `<div style="margin-top:8px">${campo('Saiu em', new Date(entrega.saiu_em).toLocaleString('pt-BR'))}</div>` : ''}
+  ${entrega.entregue_em ? `<div style="margin-top:8px">${campo('Entregue em', new Date(entrega.entregue_em).toLocaleString('pt-BR'))}</div>` : ''}
+</div>
+
+<div class="secao">
+  <div class="secao-titulo">Itens do pedido</div>
+  <table>
+    <thead><tr><th>Produto</th><th>Qtd</th><th>Preço unit.</th><th>Subtotal</th></tr></thead>
+    <tbody>${itens || '<tr><td colspan="4">Nenhum item</td></tr>'}</tbody>
+    <tfoot>
+      ${entrega.taxa > 0 ? `<tr><td colspan="3" style="text-align:right;font-size:12px;color:#64748b">Taxa de entrega</td><td>${fmt(entrega.taxa)}</td></tr>` : ''}
+      <tr class="total-row">
+        <td colspan="3">Total</td>
+        <td>${fmt((entrega.total_final || 0) + (entrega.taxa || 0))}</td>
+      </tr>
+    </tfoot>
+  </table>
+</div>
+
+${entrega.observacoes ? `<div class="secao"><div class="secao-titulo">Observações</div><p>${entrega.observacoes}</p></div>` : ''}
+
+<div class="secao" style="border:2px dashed #059669;background:#f0fdf4">
+  <div class="secao-titulo">Confirmação de recebimento</div>
+  <p style="margin-bottom:24px">Recebi os itens acima em perfeito estado.</p>
+  <div style="border-top:1px solid #059669;padding-top:8px;font-size:11px;color:#64748b">
+    Assinatura do cliente &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Data: ___/___/______
+  </div>
+</div>`
+
+  abrirJanela(`Entrega #${entrega.id}`, corpo)
+}
+
+// ══════════════════════════════════════════════════════════
 // FIADO / CONTA A RECEBER
 // ══════════════════════════════════════════════════════════
 export function imprimirFiado(conta, pagamentos = []) {

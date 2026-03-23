@@ -462,6 +462,24 @@ function criarTabelas() {
     CREATE INDEX IF NOT EXISTS idx_plano_assin_dono  ON plano_assinaturas(id_dono);
     CREATE INDEX IF NOT EXISTS idx_plano_ciclos_assin ON plano_ciclos(id_assinatura);
     CREATE INDEX IF NOT EXISTS idx_plano_usos_ciclo  ON plano_usos(id_ciclo);
+
+    -- ── MÓDULO ENTREGAS ────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS entregas (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      id_venda    INTEGER NOT NULL,
+      endereco    TEXT    NOT NULL,
+      taxa        REAL    DEFAULT 0,
+      responsavel TEXT,
+      observacoes TEXT,
+      status      TEXT    NOT NULL DEFAULT 'aguardando',
+      saiu_em     TEXT,
+      entregue_em TEXT,
+      criado_em   DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (id_venda) REFERENCES vendas(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_entregas_venda  ON entregas(id_venda);
+    CREATE INDEX IF NOT EXISTS idx_entregas_status ON entregas(status);
   `)
 }
 
@@ -470,6 +488,7 @@ function migrarTabelas() {
   const novasColunas = [
     ['vendas',        'tipo_pagamento TEXT DEFAULT "vista"'],
     ['vendas',        'id_conta_receber INTEGER'],
+    ['vendas',        'nome_cliente TEXT'],
     ['agendamentos',  'tipo_pagamento TEXT DEFAULT "vista"'],
     ['agendamentos',  'id_conta_receber INTEGER'],
   ]
@@ -1569,15 +1588,16 @@ const vendas = {
     return db.transaction(function(d) {
       // d: { id_pet, id_dono, itens, total, desconto, total_final, observacoes }
       const resVenda = db.prepare(`
-        INSERT INTO vendas (id_pet, id_dono, status, total, desconto, total_final, observacoes)
-        VALUES (@id_pet, @id_dono, 'concluida', @total, @desconto, @total_final, @observacoes)
+        INSERT INTO vendas (id_pet, id_dono, status, total, desconto, total_final, observacoes, nome_cliente)
+        VALUES (@id_pet, @id_dono, 'concluida', @total, @desconto, @total_final, @observacoes, @nome_cliente)
       `).run({
-        id_pet:      d.id_pet      || null,
-        id_dono:     d.id_dono     || null,
-        total:       d.total,
-        desconto:    d.desconto    || 0,
-        total_final: d.total_final,
-        observacoes: d.observacoes || null,
+        id_pet:       d.id_pet       || null,
+        id_dono:      d.id_dono      || null,
+        total:        d.total,
+        desconto:     d.desconto     || 0,
+        total_final:  d.total_final,
+        observacoes:  d.observacoes  || null,
+        nome_cliente: d.nome_cliente || null,
       })
       const id_venda = resVenda.lastInsertRowid
 
@@ -2058,4 +2078,83 @@ function getDbPath() {
   return dbPath || ''
 }
 
-module.exports = { connect, fechar, getDbPath, donos, pets, agendamentos, vacinas, financeiro, pesoHistorico, estoque, veterinarios, consultas, internacoes, cirurgias, prescricoes, configuracoes, exames, vendas, contasReceber, planos }
+// ──────────────────────────────────────────────────────────
+// ENTREGAS
+// ──────────────────────────────────────────────────────────
+
+const entregas = {
+  criar(dados) {
+    const res = db.prepare(`
+      INSERT INTO entregas (id_venda, endereco, taxa, responsavel, observacoes)
+      VALUES (@id_venda, @endereco, @taxa, @responsavel, @observacoes)
+    `).run({
+      id_venda:    dados.id_venda,
+      endereco:    dados.endereco,
+      taxa:        dados.taxa        || 0,
+      responsavel: dados.responsavel || null,
+      observacoes: dados.observacoes || null,
+    })
+    return entregas.buscarPorId(res.lastInsertRowid)
+  },
+
+  buscarPorId(id) {
+    const e = db.prepare(`
+      SELECT e.*,
+             v.total_final, v.nome_cliente, v.tipo_pagamento, v.criado_em AS venda_em,
+             d.nome     AS nome_dono,
+             d.telefone AS telefone_dono,
+             d.whatsapp AS whatsapp_dono
+      FROM entregas e
+      JOIN  vendas v ON e.id_venda = v.id
+      LEFT JOIN donos d ON v.id_dono = d.id
+      WHERE e.id = ?
+    `).get(id)
+    if (!e) return null
+    e.itens = db.prepare(`SELECT * FROM itens_venda WHERE id_venda = ?`).all(e.id_venda)
+    return e
+  },
+
+  listar() {
+    const lista = db.prepare(`
+      SELECT e.*,
+             v.total_final, v.nome_cliente, v.tipo_pagamento, v.criado_em AS venda_em,
+             d.nome     AS nome_dono,
+             d.telefone AS telefone_dono,
+             d.whatsapp AS whatsapp_dono
+      FROM entregas e
+      JOIN  vendas v ON e.id_venda = v.id
+      LEFT JOIN donos d ON v.id_dono = d.id
+      ORDER BY e.criado_em DESC
+    `).all()
+    for (const e of lista) {
+      e.itens = db.prepare(`SELECT * FROM itens_venda WHERE id_venda = ?`).all(e.id_venda)
+    }
+    return lista
+  },
+
+  atualizarStatus(id, status) {
+    const agora = new Date().toISOString()
+    if (status === 'saiu')     db.prepare(`UPDATE entregas SET status=?, saiu_em=?     WHERE id=?`).run(status, agora, id)
+    else if (status === 'entregue') db.prepare(`UPDATE entregas SET status=?, entregue_em=? WHERE id=?`).run(status, agora, id)
+    else                       db.prepare(`UPDATE entregas SET status=?                WHERE id=?`).run(status, id)
+    return entregas.buscarPorId(id)
+  },
+
+  editar(id, dados) {
+    db.prepare(`
+      UPDATE entregas SET endereco=@endereco, taxa=@taxa, responsavel=@responsavel, observacoes=@observacoes
+      WHERE id=@id
+    `).run({ ...dados, id })
+    return entregas.buscarPorId(id)
+  },
+
+  deletar(id) {
+    return db.prepare('DELETE FROM entregas WHERE id = ?').run(id)
+  },
+
+  pendentes() {
+    return db.prepare(`SELECT COUNT(*) AS total FROM entregas WHERE status IN ('aguardando','saiu')`).get()
+  },
+}
+
+module.exports = { connect, fechar, getDbPath, donos, pets, agendamentos, vacinas, financeiro, pesoHistorico, estoque, veterinarios, consultas, internacoes, cirurgias, prescricoes, configuracoes, exames, vendas, contasReceber, planos, entregas }

@@ -365,6 +365,18 @@ function registrarHandlers() {
   ipcMain.handle('planos:alertas',            ()              => db.planos.alertas())
 
   // ────────────────────────────────────────
+  // ENTREGAS
+  // ────────────────────────────────────────
+  ipcMain.handle('entregas:criar',           (_, dados)          => db.entregas.criar(dados))
+  ipcMain.handle('entregas:listar',          ()                  => db.entregas.listar())
+  ipcMain.handle('entregas:buscarPorId',     (_, id)             => db.entregas.buscarPorId(id))
+  ipcMain.handle('entregas:atualizarStatus', (_, { id, status }) => db.entregas.atualizarStatus(id, status))
+  ipcMain.handle('entregas:editar',          (_, { id, dados })  => db.entregas.editar(id, dados))
+  ipcMain.handle('entregas:deletar',         (_, id)             => db.entregas.deletar(id))
+  ipcMain.handle('entregas:pendentes',       ()                  => db.entregas.pendentes())
+  ipcMain.handle('shell:abrirExterno',       (_, url)            => { shell.openExternal(url); return true })
+
+  // ────────────────────────────────────────
   // AUTENTICAÇÃO
   // ────────────────────────────────────────
 

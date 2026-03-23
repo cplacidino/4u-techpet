@@ -2,9 +2,10 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   ShoppingCart, Plus, Minus, Trash2, Search, CheckCircle2,
   XCircle, Receipt, Package, Loader2, ChevronDown, ChevronUp,
-  HandCoins, User, Printer,
+  HandCoins, User, Printer, Truck, MapPin, Phone, ChevronRight,
+  Clock, CheckCheck, AlertCircle, Edit2,
 } from 'lucide-react'
-import { imprimirVenda } from '../utils/imprimir'
+import { imprimirVenda, imprimirEntrega } from '../utils/imprimir'
 
 // ── Formata moeda ─────────────────────────────────────────
 function fmt(v) {
@@ -124,8 +125,8 @@ function CardVenda({ venda, onCancelar }) {
           <p className="text-sm font-semibold text-slate-800">Venda #{venda.id}</p>
           <p className="text-xs text-slate-400 truncate">
             {venda.nome_pet ? `${venda.nome_pet}` : ''}
-            {venda.nome_dono ? ` · ${venda.nome_dono}` : ''}
-            {!venda.nome_pet && !venda.nome_dono ? 'Venda avulsa' : ''}
+            {(venda.nome_dono || venda.nome_cliente) ? ` · ${venda.nome_dono || venda.nome_cliente}` : ''}
+            {!venda.nome_pet && !venda.nome_dono && !venda.nome_cliente ? 'Venda avulsa' : ''}
             {' · '}{new Date(venda.criado_em).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
           </p>
         </div>
@@ -205,6 +206,18 @@ export default function Vendas() {
   const [buscaCliente, setBuscaCliente] = useState('')
   const [clientes, setClientes]       = useState([])
   const [clienteSelecionado, setClienteSelecionado] = useState(null)
+  const [nomeCliente, setNomeCliente] = useState('')
+  const [showSugestoes, setShowSugestoes] = useState(false)
+  // Entrega
+  const [isEntrega, setIsEntrega]           = useState(false)
+  const [entregaEndereco, setEntregaEndereco] = useState('')
+  const [entregaTaxa, setEntregaTaxa]       = useState('')
+  const [entregaResp, setEntregaResp]       = useState('')
+  const [entregaObs, setEntregaObs]         = useState('')
+  // Aba entregas
+  const [listaEntregas, setListaEntregas]   = useState([])
+  const [filtroEntrega, setFiltroEntrega]   = useState('todos')
+  const [entregaEditando, setEntregaEditando] = useState(null)
 
   // Carregar produtos do estoque
   const carregarProdutos = useCallback(async () => {
@@ -230,13 +243,17 @@ export default function Vendas() {
     }
   }, [])
 
+  const carregarEntregas = useCallback(async () => {
+    const lista = await window.api.entregas.listar()
+    setListaEntregas(lista || [])
+  }, [])
+
   useEffect(() => { carregarProdutos() }, [carregarProdutos])
   useEffect(() => {
     if (aba === 'historico') carregarHistorico()
-  }, [aba, carregarHistorico])
-  useEffect(() => {
-    if (tipoPgto === 'prazo') window.api.donos.listar().then(setClientes)
-  }, [tipoPgto])
+    if (aba === 'entregas')  carregarEntregas()
+  }, [aba, carregarHistorico, carregarEntregas])
+  useEffect(() => { window.api.donos.listar().then(setClientes) }, [])
 
   // Produtos filtrados pela busca
   const produtosFiltrados = produtos.filter(p =>
@@ -299,24 +316,42 @@ export default function Vendas() {
     }
     setFinalizando(true)
     try {
-      await window.api.vendas.criar({
+      const resVenda = await window.api.vendas.criar({
         itens:           carrinho,
         total:           subtotal,
         desconto:        descontoVal,
         total_final:     totalFinal,
         tipo_pagamento:  tipoPgto,
         id_dono:         clienteSelecionado?.id || null,
+        nome_cliente:    nomeCliente.trim() || null,
         data_vencimento: vencimento || null,
       })
+      const venda = await window.api.vendas.buscarPorId(resVenda?.id || 0)
+      if (isEntrega && entregaEndereco.trim()) {
+        await window.api.entregas.criar({
+          id_venda:    resVenda?.id || venda?.id,
+          endereco:    entregaEndereco.trim(),
+          taxa:        parseFloat(entregaTaxa || 0),
+          responsavel: entregaResp.trim() || null,
+          observacoes: entregaObs.trim() || null,
+        })
+      }
       setCarrinho([])
       setDesconto('')
       setTipoPgto('vista')
       setClienteSelecionado(null)
       setBuscaCliente('')
       setVencimento('')
+      setNomeCliente('')
+      setShowSugestoes(false)
+      setIsEntrega(false)
+      setEntregaEndereco('')
+      setEntregaTaxa('')
+      setEntregaResp('')
+      setEntregaObs('')
       await carregarProdutos()
-      setAba('historico')
-      carregarHistorico()
+      setAba(isEntrega ? 'entregas' : 'historico')
+      if (isEntrega) carregarEntregas(); else carregarHistorico()
     } finally {
       setFinalizando(false)
     }
@@ -337,6 +372,7 @@ export default function Vendas() {
         {[
           { key: 'pdv',       label: 'PDV',       icon: ShoppingCart },
           { key: 'historico', label: 'Histórico',  icon: Receipt },
+          { key: 'entregas',  label: 'Entregas',   icon: Truck },
         ].map(({ key, label, icon: Icon }) => (
           <button
             key={key}
@@ -442,6 +478,80 @@ export default function Vendas() {
 
             {carrinho.length > 0 && (
               <div className="border-t border-slate-100 px-4 py-4 space-y-3">
+                {/* Cliente */}
+                <div className="relative">
+                  <div className="flex items-center gap-2">
+                    <User size={13} className="text-slate-400 flex-shrink-0" />
+                    <input
+                      type="text"
+                      placeholder="Nome do cliente (opcional)"
+                      value={nomeCliente}
+                      onChange={e => { setNomeCliente(e.target.value); setClienteSelecionado(null); setShowSugestoes(true) }}
+                      onFocus={() => setShowSugestoes(true)}
+                      onBlur={() => setTimeout(() => setShowSugestoes(false), 150)}
+                      className="flex-1 px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+                  {showSugestoes && nomeCliente.length > 0 && (
+                    <div className="absolute left-5 right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-10 max-h-32 overflow-y-auto">
+                      {clientes.filter(c => c.nome.toLowerCase().includes(nomeCliente.toLowerCase())).slice(0, 5).map(c => (
+                        <button key={c.id} onMouseDown={() => { setNomeCliente(c.nome); setClienteSelecionado(c); setShowSugestoes(false) }}
+                          className="w-full text-left px-3 py-1.5 text-xs hover:bg-emerald-50 text-slate-700 transition-colors">
+                          {c.nome}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Toggle Entrega */}
+                <div>
+                  <button
+                    onClick={() => setIsEntrega(v => !v)}
+                    className={`flex items-center gap-2 w-full px-3 py-2 rounded-xl text-xs font-medium border transition-colors ${isEntrega ? 'bg-blue-50 border-blue-300 text-blue-700' : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'}`}
+                  >
+                    <Truck size={13} />
+                    {isEntrega ? 'Entrega ativada' : 'Marcar como entrega'}
+                  </button>
+                  {isEntrega && (
+                    <div className="mt-2 space-y-2 p-3 bg-blue-50 rounded-xl border border-blue-100">
+                      <div className="flex items-start gap-2">
+                        <MapPin size={12} className="text-blue-400 mt-1 flex-shrink-0" />
+                        <textarea
+                          placeholder="Endereço de entrega *"
+                          value={entregaEndereco}
+                          onChange={e => setEntregaEndereco(e.target.value)}
+                          rows={2}
+                          className="flex-1 px-2 py-1 bg-white border border-blue-200 rounded-lg text-xs resize-none focus:outline-none focus:ring-2 focus:ring-blue-400"
+                        />
+                      </div>
+                      <div className="flex gap-2">
+                        <input
+                          type="number" min="0" step="0.01"
+                          placeholder="Taxa R$"
+                          value={entregaTaxa}
+                          onChange={e => setEntregaTaxa(e.target.value)}
+                          className="w-20 px-2 py-1 bg-white border border-blue-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-400"
+                        />
+                        <input
+                          type="text"
+                          placeholder="Responsável"
+                          value={entregaResp}
+                          onChange={e => setEntregaResp(e.target.value)}
+                          className="flex-1 px-2 py-1 bg-white border border-blue-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-400"
+                        />
+                      </div>
+                      <input
+                        type="text"
+                        placeholder="Observações (opcional)"
+                        value={entregaObs}
+                        onChange={e => setEntregaObs(e.target.value)}
+                        className="w-full px-2 py-1 bg-white border border-blue-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-400"
+                      />
+                    </div>
+                  )}
+                </div>
+
                 {/* Desconto */}
                 <div className="flex items-center gap-2">
                   <label className="text-xs text-slate-500 flex-shrink-0">Desconto R$</label>
@@ -561,6 +671,199 @@ export default function Vendas() {
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── ENTREGAS ─────────────────────────────────────────── */}
+      {aba === 'entregas' && (
+        <div className="flex-1 min-h-0 flex flex-col gap-4">
+          {/* Filtros */}
+          <div className="flex gap-2 flex-wrap">
+            {[
+              { key: 'todos',        label: 'Todos',           cor: 'slate' },
+              { key: 'aguardando',   label: 'Aguardando',      cor: 'blue' },
+              { key: 'saiu',         label: 'Saiu p/ entrega', cor: 'amber' },
+              { key: 'entregue',     label: 'Entregue',        cor: 'emerald' },
+              { key: 'nao_entregue', label: 'Não entregue',    cor: 'red' },
+            ].map(({ key, label }) => (
+              <button key={key} onClick={() => setFiltroEntrega(key)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${filtroEntrega === key ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
+                {label}
+              </button>
+            ))}
+            <button onClick={carregarEntregas} className="ml-auto px-3 py-1.5 rounded-lg text-xs font-medium bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors">
+              Atualizar
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto space-y-3">
+            {listaEntregas.filter(e => filtroEntrega === 'todos' || e.status === filtroEntrega).length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-40 text-slate-400">
+                <Truck size={32} className="mb-2 opacity-30" />
+                <p className="text-sm">Nenhuma entrega encontrada</p>
+              </div>
+            ) : listaEntregas
+              .filter(e => filtroEntrega === 'todos' || e.status === filtroEntrega)
+              .map(entrega => {
+                const statusCfg = {
+                  aguardando:   { label: 'Aguardando',      cls: 'bg-blue-50 text-blue-700 border-blue-100',    icon: Clock },
+                  saiu:         { label: 'Saiu p/ entrega', cls: 'bg-amber-50 text-amber-700 border-amber-100', icon: Truck },
+                  entregue:     { label: 'Entregue',        cls: 'bg-emerald-50 text-emerald-700 border-emerald-100', icon: CheckCheck },
+                  nao_entregue: { label: 'Não entregue',    cls: 'bg-red-50 text-red-500 border-red-100',       icon: AlertCircle },
+                }[entrega.status] || { label: entrega.status, cls: 'bg-slate-50 text-slate-600', icon: Clock }
+                const StatusIcon = statusCfg.icon
+                const cliente = entrega.nome_dono || entrega.nome_cliente || 'Cliente não informado'
+                const telefone = entrega.whatsapp_dono || entrega.telefone_dono
+                const whatsappNum = telefone?.replace(/\D/g, '')
+
+                return (
+                  <div key={entrega.id} className="bg-white rounded-2xl border border-slate-100 shadow-soft overflow-hidden">
+                    <div className="flex items-start gap-3 px-4 py-3.5">
+                      <div className="w-9 h-9 bg-blue-50 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5">
+                        <Truck size={16} className="text-blue-500" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="text-sm font-semibold text-slate-800">Entrega #{entrega.id}</p>
+                          <span className="text-xs text-slate-400">· Venda #{entrega.id_venda}</span>
+                          <span className={`text-xs px-2 py-0.5 rounded-lg border font-semibold flex items-center gap-1 ${statusCfg.cls}`}>
+                            <StatusIcon size={10} /> {statusCfg.label}
+                          </span>
+                        </div>
+                        <p className="text-xs font-medium text-slate-700 mt-0.5">{cliente}</p>
+                        <div className="flex items-start gap-1 mt-0.5">
+                          <MapPin size={11} className="text-slate-400 mt-0.5 flex-shrink-0" />
+                          <p className="text-xs text-slate-500">{entrega.endereco}</p>
+                        </div>
+                        {entrega.responsavel && (
+                          <p className="text-xs text-slate-400 mt-0.5">Responsável: {entrega.responsavel}</p>
+                        )}
+                        <div className="flex items-center gap-3 mt-1">
+                          <span className="text-xs font-bold text-slate-700">{fmt(entrega.total_final)}</span>
+                          {entrega.taxa > 0 && <span className="text-xs text-blue-600">+{fmt(entrega.taxa)} taxa</span>}
+                          <span className="text-xs text-slate-400">{new Date(entrega.criado_em).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Ações */}
+                    <div className="border-t border-slate-50 px-4 py-2.5 flex items-center gap-2 flex-wrap">
+                      {/* Avançar status */}
+                      {entrega.status === 'aguardando' && (
+                        <button onClick={async () => { await window.api.entregas.atualizarStatus(entrega.id, 'saiu'); carregarEntregas() }}
+                          className="flex items-center gap-1 px-2.5 py-1.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-lg text-xs font-medium hover:bg-amber-100 transition-colors">
+                          <Truck size={11} /> Saiu p/ entrega
+                        </button>
+                      )}
+                      {entrega.status === 'saiu' && (
+                        <>
+                          <button onClick={async () => { await window.api.entregas.atualizarStatus(entrega.id, 'entregue'); carregarEntregas() }}
+                            className="flex items-center gap-1 px-2.5 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg text-xs font-medium hover:bg-emerald-100 transition-colors">
+                            <CheckCheck size={11} /> Confirmar entrega
+                          </button>
+                          <button onClick={async () => { await window.api.entregas.atualizarStatus(entrega.id, 'nao_entregue'); carregarEntregas() }}
+                            className="flex items-center gap-1 px-2.5 py-1.5 bg-red-50 text-red-500 border border-red-100 rounded-lg text-xs font-medium hover:bg-red-100 transition-colors">
+                            <AlertCircle size={11} /> Não entregue
+                          </button>
+                        </>
+                      )}
+                      {entrega.status === 'nao_entregue' && (
+                        <button onClick={async () => { await window.api.entregas.atualizarStatus(entrega.id, 'aguardando'); carregarEntregas() }}
+                          className="flex items-center gap-1 px-2.5 py-1.5 bg-blue-50 text-blue-700 border border-blue-200 rounded-lg text-xs font-medium hover:bg-blue-100 transition-colors">
+                          <Clock size={11} /> Recolocar na fila
+                        </button>
+                      )}
+
+                      {/* WhatsApp */}
+                      {whatsappNum && (
+                        <button onClick={() => window.api.shell.abrirExterno(`https://wa.me/55${whatsappNum}?text=${encodeURIComponent(`Olá ${cliente}! Seu pedido está a caminho. 🚚`)}`)}
+                          className="flex items-center gap-1 px-2.5 py-1.5 bg-green-50 text-green-700 border border-green-200 rounded-lg text-xs font-medium hover:bg-green-100 transition-colors">
+                          <Phone size={11} /> WhatsApp
+                        </button>
+                      )}
+
+                      {/* Imprimir romaneio */}
+                      <button onClick={() => imprimirEntrega(entrega)}
+                        className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-50 text-slate-600 border border-slate-200 rounded-lg text-xs font-medium hover:bg-slate-100 transition-colors">
+                        <Printer size={11} /> Romaneio
+                      </button>
+
+                      {/* Editar */}
+                      <button onClick={() => setEntregaEditando(entrega)}
+                        className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-50 text-slate-600 border border-slate-200 rounded-lg text-xs font-medium hover:bg-slate-100 transition-colors">
+                        <Edit2 size={11} /> Editar
+                      </button>
+                    </div>
+
+                    {/* Itens colapsados */}
+                    {entrega.itens?.length > 0 && (
+                      <div className="border-t border-slate-50 px-4 py-2 bg-slate-50/50">
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Itens</p>
+                        {entrega.itens.map(item => (
+                          <div key={item.id} className="flex justify-between text-xs text-slate-500">
+                            <span>{item.nome_produto}</span>
+                            <span>{item.quantidade}x {fmt(item.preco_unit)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+          </div>
+        </div>
+      )}
+
+      {/* Modal editar entrega */}
+      {entregaEditando && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-sm w-full space-y-3">
+            <h3 className="text-base font-bold text-slate-800">Editar entrega #{entregaEditando.id}</h3>
+            <div>
+              <label className="text-xs font-semibold text-slate-600">Endereço</label>
+              <textarea rows={2} value={entregaEditando.endereco}
+                onChange={e => setEntregaEditando(v => ({ ...v, endereco: e.target.value }))}
+                className="w-full mt-1 px-3 py-2 border border-slate-200 rounded-xl text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div className="flex gap-2">
+              <div className="flex-1">
+                <label className="text-xs font-semibold text-slate-600">Taxa R$</label>
+                <input type="number" min="0" step="0.01" value={entregaEditando.taxa}
+                  onChange={e => setEntregaEditando(v => ({ ...v, taxa: e.target.value }))}
+                  className="w-full mt-1 px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+              <div className="flex-1">
+                <label className="text-xs font-semibold text-slate-600">Responsável</label>
+                <input type="text" value={entregaEditando.responsavel || ''}
+                  onChange={e => setEntregaEditando(v => ({ ...v, responsavel: e.target.value }))}
+                  className="w-full mt-1 px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-slate-600">Observações</label>
+              <input type="text" value={entregaEditando.observacoes || ''}
+                onChange={e => setEntregaEditando(v => ({ ...v, observacoes: e.target.value }))}
+                className="w-full mt-1 px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div className="flex gap-3 pt-2">
+              <button onClick={() => setEntregaEditando(null)}
+                className="flex-1 py-2.5 bg-slate-100 text-slate-700 rounded-xl text-sm font-medium hover:bg-slate-200 transition-colors">
+                Cancelar
+              </button>
+              <button onClick={async () => {
+                await window.api.entregas.editar(entregaEditando.id, {
+                  endereco:    entregaEditando.endereco,
+                  taxa:        parseFloat(entregaEditando.taxa || 0),
+                  responsavel: entregaEditando.responsavel,
+                  observacoes: entregaEditando.observacoes,
+                })
+                setEntregaEditando(null)
+                carregarEntregas()
+              }} className="flex-1 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-medium hover:bg-blue-700 transition-colors">
+                Salvar
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('api', {
     node:     process.versions.node,
     electron: process.versions.electron,
     chrome:   process.versions.chrome,
+    app:      (() => { try { return require(require('path').join(__dirname, '../package.json')).version } catch { return '—' } })(),
   },
 
   // ── DONOS ───────────────────────────────────────────────
@@ -252,6 +253,22 @@ contextBridge.exposeInMainWorld('api', {
     resumoCicloAtual:   (id_assin)     => ipcRenderer.invoke('planos:resumoCicloAtual', id_assin),
     assinaturasAtivas:  (id_dono)      => ipcRenderer.invoke('planos:assinaturasAtivas', id_dono),
     alertas:            ()             => ipcRenderer.invoke('planos:alertas'),
+  },
+
+  // ── ENTREGAS ─────────────────────────────────────────────
+  entregas: {
+    criar:           (dados)        => ipcRenderer.invoke('entregas:criar', dados),
+    listar:          ()             => ipcRenderer.invoke('entregas:listar'),
+    buscarPorId:     (id)           => ipcRenderer.invoke('entregas:buscarPorId', id),
+    atualizarStatus: (id, status)   => ipcRenderer.invoke('entregas:atualizarStatus', { id, status }),
+    editar:          (id, dados)    => ipcRenderer.invoke('entregas:editar', { id, dados }),
+    deletar:         (id)           => ipcRenderer.invoke('entregas:deletar', id),
+    pendentes:       ()             => ipcRenderer.invoke('entregas:pendentes'),
+  },
+
+  // ── SHELL ─────────────────────────────────────────────────
+  shell: {
+    abrirExterno: (url) => ipcRenderer.invoke('shell:abrirExterno', url),
   },
 
   // ── AUTENTICAÇÃO ─────────────────────────────────────────

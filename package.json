@@ -1,6 +1,6 @@
 {
   "name": "4u-techpet",
-  "version": "1.0.2",
+  "version": "1.0.4",
   "description": "Sistema de gestão para clínica veterinária e petshop — 4u Technology",
   "author": "4u Technology",
   "main": "electron/main.js",
