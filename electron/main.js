@@ -2,7 +2,7 @@
 // PROCESSO PRINCIPAL DO ELECTRON (Main Process)
 // ============================================================
 
-const { app, BrowserWindow } = require('electron')
+const { app, BrowserWindow, Menu } = require('electron')
 const path = require('path')
 const db      = require('./database')
 const backup  = require('./backup')
@@ -42,6 +42,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  Menu.setApplicationMenu(null)
   // 1. Conecta ao banco de dados
   db.connect(app)
 
