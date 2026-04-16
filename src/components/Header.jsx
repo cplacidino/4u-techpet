@@ -1,18 +1,19 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { Bell, Search, Syringe, CalendarClock, X, Sun, Moon, PawPrint, Users, Loader2 } from 'lucide-react'
+import { Bell, Search, Syringe, CalendarClock, X, Sun, Moon, PawPrint, Users, Loader2, HandCoins, RefreshCw, Download, CheckCircle2, AlertCircle } from 'lucide-react'
 import { useTheme } from '../contexts/ThemeContext'
 
 // ── Títulos de cada rota ───────────────────────────────────
 const titulos = {
   '/':              { titulo: 'Dashboard',      sub: 'Visão geral do dia' },
-  '/pets':          { titulo: 'Pets',           sub: 'Gerenciar animais e tutores' },
+  '/pets':          { titulo: 'Clientes',       sub: 'Tutores e pets' },
   '/agendamentos':  { titulo: 'Agendamentos',   sub: 'Agenda e atendimentos' },
   '/vacinas':       { titulo: 'Vacinas',        sub: 'Carteira de vacinação' },
   '/financeiro':    { titulo: 'Financeiro',     sub: 'Caixa e lançamentos' },
   '/estoque':       { titulo: 'Estoque',        sub: 'Produtos e insumos' },
   '/vendas':        { titulo: 'Vendas',         sub: 'PDV e histórico de vendas' },
   '/fiado':         { titulo: 'Fiado',          sub: 'Contas a receber e cobranças' },
+  '/clinica':       { titulo: 'Panorama Clínico', sub: 'Histórico completo por animal' },
   '/consultas':     { titulo: 'Consultas',      sub: 'Prontuários e atendimentos' },
   '/internacoes':   { titulo: 'Internações',    sub: 'Pacientes internados' },
   '/cirurgias':     { titulo: 'Cirurgias',      sub: 'Procedimentos cirúrgicos' },
@@ -251,6 +252,179 @@ function PainelNotificacoes({ notifs, onFechar, onNavegar }) {
   )
 }
 
+// ── Botão de Atualização ──────────────────────────────────
+
+function BotaoAtualizar() {
+  const [estado, setEstado] = useState('idle') // idle | verificando | disponivel | baixando | baixado | atualizado | erro
+  const [info, setInfo]     = useState(null)   // { versao, notas }
+  const [progresso, setProgresso] = useState(0)
+  const [aberto, setAberto] = useState(false)
+  const ref = useRef(null)
+
+  useEffect(() => {
+    // Registra listeners ANTES de checar, para não perder o evento
+    window.api.update.onDisponivel(d => { setInfo(d); setEstado('disponivel'); setAberto(true) })
+    window.api.update.onNaoDisponivel(() => setEstado(prev => prev === 'verificando' ? 'atualizado' : prev))
+    window.api.update.onProgresso(d => { setProgresso(d.porcentagem); setEstado('baixando') })
+    window.api.update.onBaixado(d => { setInfo(d); setEstado('baixado'); setAberto(true) })
+    window.api.update.onErro(() => setEstado(prev => prev === 'verificando' ? 'erro' : prev))
+
+    // Aciona verificação agora (listeners já estão prontos)
+    setEstado('verificando')
+    window.api.update.checar().catch(() => setEstado('idle'))
+
+    return () => window.api.update.removerListeners()
+  }, [])
+
+  // Fecha painel ao clicar fora
+  useEffect(() => {
+    function handler(e) { if (ref.current && !ref.current.contains(e.target)) setAberto(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  async function verificar() {
+    setEstado('verificando')
+    setAberto(true)
+    await window.api.update.checar()
+    // Se após 5s ainda verificando, volta pra idle (dev ou sem internet)
+    setTimeout(() => setEstado(prev => prev === 'verificando' ? 'idle' : prev), 5000)
+  }
+
+  async function baixar() {
+    setEstado('baixando')
+    setProgresso(0)
+    await window.api.update.baixar()
+  }
+
+  async function instalar() {
+    await window.api.update.instalar()
+  }
+
+  const temAtualização = estado === 'disponivel' || estado === 'baixando' || estado === 'baixado'
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => estado === 'idle' || estado === 'atualizado' || estado === 'erro' ? verificar() : setAberto(v => !v)}
+        title="Verificar atualizações"
+        className={`relative w-9 h-9 rounded-lg flex items-center justify-center transition-colors border
+          ${temAtualização
+            ? 'bg-emerald-50 border-emerald-200 text-emerald-600 hover:bg-emerald-100'
+            : 'bg-slate-50 border-slate-100 text-slate-500 hover:bg-slate-100 hover:text-slate-700'
+          }`}
+      >
+        {estado === 'verificando'
+          ? <Loader2 size={15} className="animate-spin" />
+          : estado === 'baixando'
+            ? <Download size={15} className="animate-bounce" />
+            : estado === 'baixado'
+              ? <CheckCircle2 size={15} />
+              : <RefreshCw size={15} />
+        }
+        {temAtualização && (
+          <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-white" />
+        )}
+      </button>
+
+      {aberto && (
+        <div className="absolute right-0 top-full mt-2 w-72 bg-white rounded-2xl border border-slate-100 shadow-xl z-50 overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
+            <span className="text-sm font-semibold text-slate-800">Atualização do sistema</span>
+            <button onClick={() => setAberto(false)} className="p-1 rounded-lg hover:bg-slate-100 text-slate-400">
+              <X size={14} />
+            </button>
+          </div>
+
+          <div className="p-4">
+            {estado === 'verificando' && (
+              <div className="flex items-center gap-3 text-slate-500">
+                <Loader2 size={18} className="animate-spin text-blue-500 flex-shrink-0" />
+                <p className="text-sm">Verificando atualizações...</p>
+              </div>
+            )}
+
+            {estado === 'atualizado' && (
+              <div className="flex items-center gap-3">
+                <CheckCircle2 size={18} className="text-emerald-500 flex-shrink-0" />
+                <div>
+                  <p className="text-sm font-medium text-slate-800">Tudo atualizado!</p>
+                  <p className="text-xs text-slate-400 mt-0.5">Você já tem a versão mais recente.</p>
+                </div>
+              </div>
+            )}
+
+            {estado === 'disponivel' && info && (
+              <div className="space-y-3">
+                <div className="flex items-start gap-3">
+                  <Download size={18} className="text-emerald-500 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-medium text-slate-800">Nova versão disponível</p>
+                    <p className="text-xs text-slate-400 mt-0.5">Versão {info.versao} pronta para download</p>
+                  </div>
+                </div>
+                <button onClick={baixar}
+                  className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-xl transition-colors">
+                  Baixar e instalar
+                </button>
+              </div>
+            )}
+
+            {estado === 'baixando' && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-3">
+                  <Download size={18} className="text-blue-500 flex-shrink-0 animate-bounce" />
+                  <p className="text-sm font-medium text-slate-800">Baixando atualização... {progresso}%</p>
+                </div>
+                <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                  <div className="h-full bg-emerald-500 rounded-full transition-all duration-300"
+                    style={{ width: `${progresso}%` }} />
+                </div>
+                <p className="text-xs text-slate-400 text-center">Não feche o sistema durante o download</p>
+              </div>
+            )}
+
+            {estado === 'baixado' && (
+              <div className="space-y-3">
+                <div className="flex items-start gap-3">
+                  <CheckCircle2 size={18} className="text-emerald-500 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-medium text-slate-800">Download concluído!</p>
+                    <p className="text-xs text-slate-400 mt-0.5">O sistema será reiniciado para aplicar a atualização.</p>
+                  </div>
+                </div>
+                <button onClick={instalar}
+                  className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-xl transition-colors">
+                  Instalar e reiniciar agora
+                </button>
+              </div>
+            )}
+
+            {estado === 'erro' && (
+              <div className="flex items-center gap-3">
+                <AlertCircle size={18} className="text-red-500 flex-shrink-0" />
+                <div>
+                  <p className="text-sm font-medium text-slate-800">Sem conexão</p>
+                  <p className="text-xs text-slate-400 mt-0.5">Não foi possível verificar. Tente novamente.</p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {(estado === 'atualizado' || estado === 'erro') && (
+            <div className="px-4 pb-4">
+              <button onClick={verificar}
+                className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-sm font-medium rounded-xl transition-colors">
+                Verificar novamente
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Header principal ──────────────────────────────────────
 
 function Header() {
@@ -316,6 +490,25 @@ function Header() {
           rota: '/agendamentos',
         })
       }
+
+      // Contas a receber vencendo em até 3 dias
+      const contasAlerta = await window.api.fiado.alertasVencimento()
+      if (contasAlerta.length > 0) {
+        const atrasadas = contasAlerta.filter(c => c.status === 'atrasado').length
+        lista.push({
+          titulo: atrasadas > 0 ? 'Cobranças em atraso' : 'Cobranças vencendo em breve',
+          descricao: atrasadas > 0
+            ? `${atrasadas} conta${atrasadas > 1 ? 's' : ''} atrasada${atrasadas > 1 ? 's' : ''} · ${contasAlerta.length} total com vencimento próximo`
+            : `${contasAlerta.length} conta${contasAlerta.length > 1 ? 's' : ''} vence${contasAlerta.length > 1 ? 'm' : ''} nos próximos 3 dias`,
+          Icon: HandCoins,
+          iconBg: atrasadas > 0 ? 'bg-red-50' : 'bg-orange-50',
+          iconColor: atrasadas > 0 ? 'text-red-500' : 'text-orange-500',
+          badgeBg: atrasadas > 0 ? 'bg-red-50' : 'bg-orange-50',
+          badgeText: atrasadas > 0 ? 'text-red-600' : 'text-orange-600',
+          badge: atrasadas > 0 ? `${atrasadas} atrasada${atrasadas > 1 ? 's' : ''}` : `${contasAlerta.length} vencendo`,
+          rota: '/fiado',
+        })
+      }
     } catch (_) { /* silencioso */ }
     setNotifs(lista)
   }, [])
@@ -359,6 +552,9 @@ function Header() {
           <div className="px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-lg text-sm font-mono font-medium text-slate-600 dark:text-slate-300 select-none tabular-nums">
             {hora}
           </div>
+
+          {/* Atualização */}
+          <BotaoAtualizar />
 
           {/* Toggle tema */}
           <button

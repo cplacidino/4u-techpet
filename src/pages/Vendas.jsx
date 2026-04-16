@@ -2,8 +2,8 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   ShoppingCart, Plus, Minus, Trash2, Search, CheckCircle2,
   XCircle, Receipt, Package, Loader2, ChevronDown, ChevronUp,
-  HandCoins, User, Printer, Truck, MapPin, Phone, ChevronRight,
-  Clock, CheckCheck, AlertCircle, Edit2,
+  HandCoins, User, Printer, Truck, MapPin, Phone,
+  Clock, CheckCheck, AlertCircle, Edit2, Wheat, X,
 } from 'lucide-react'
 import { imprimirVenda, imprimirEntrega } from '../utils/imprimir'
 
@@ -13,7 +13,32 @@ function fmt(v) {
 }
 
 // ── Item do carrinho ──────────────────────────────────────
-function ItemCarrinho({ item, onQtd, onRemover }) {
+function ItemCarrinho({ item, onQtd, onRemover, onEditarKg }) {
+  if (item.isGranel) {
+    return (
+      <div className="flex items-center gap-3 py-3 border-b border-slate-50 last:border-0">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5">
+            <Wheat size={12} className="text-amber-500 flex-shrink-0" />
+            <p className="text-sm font-medium text-slate-800 truncate">{item.nome_produto}</p>
+          </div>
+          <p className="text-xs text-slate-400">{fmt(item.preco_unit)}/kg</p>
+        </div>
+        <button
+          onClick={() => onEditarKg(item)}
+          className="flex items-center gap-1 px-2.5 py-1 bg-amber-50 border border-amber-200 rounded-lg text-xs font-bold text-amber-700 hover:bg-amber-100 transition-colors"
+        >
+          {Number(item.quantidade).toFixed(3)} kg
+        </button>
+        <span className="text-sm font-bold text-emerald-700 w-20 text-right tabular-nums">
+          {fmt(item.subtotal)}
+        </span>
+        <button onClick={() => onRemover(item.id_produto)} className="text-slate-300 hover:text-red-400 transition-colors">
+          <Trash2 size={14} />
+        </button>
+      </div>
+    )
+  }
   return (
     <div className="flex items-center gap-3 py-3 border-b border-slate-50 last:border-0">
       <div className="flex-1 min-w-0">
@@ -48,14 +73,161 @@ function ItemCarrinho({ item, onQtd, onRemover }) {
   )
 }
 
+// ── Modal de venda granel (kg ↔ R$) ──────────────────────
+function ModalGranel({ produto, itemExistente, onConfirmar, onFechar }) {
+  const precoKg = produto.preco_por_kg || 0
+  const [kg, setKg]     = useState(itemExistente ? String(itemExistente.quantidade) : '')
+  const [reais, setReais] = useState(itemExistente ? String((itemExistente.quantidade * precoKg).toFixed(2)) : '')
+
+  function handleKg(val) {
+    setKg(val)
+    const n = parseFloat(val)
+    if (!isNaN(n)) setReais((n * precoKg).toFixed(2))
+    else setReais('')
+  }
+
+  function handleReais(val) {
+    setReais(val)
+    const n = parseFloat(val)
+    if (!isNaN(n) && precoKg > 0) setKg((n / precoKg).toFixed(3))
+    else setKg('')
+  }
+
+  function confirmar() {
+    const kgNum = parseFloat(kg)
+    if (!kgNum || kgNum <= 0) return
+    onConfirmar(produto, kgNum)
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm">
+        <div className="flex items-center justify-between p-5 border-b border-slate-100">
+          <div className="flex items-center gap-2">
+            <Wheat size={18} className="text-amber-500" />
+            <div>
+              <h3 className="font-semibold text-slate-800">{produto.nome}</h3>
+              <p className="text-xs text-slate-400">{fmt(produto.preco_por_kg)}/kg · {Number(produto.quantidade).toFixed(2)} kg em estoque</p>
+            </div>
+          </div>
+          <button onClick={onFechar} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400"><X size={18} /></button>
+        </div>
+        <div className="p-5 space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1.5">Quantidade (kg)</label>
+            <input
+              type="number" step="0.001" min="0.001" autoFocus
+              placeholder="0,000"
+              value={kg}
+              onChange={e => handleKg(e.target.value)}
+              className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1.5">Valor (R$)</label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">R$</span>
+              <input
+                type="number" step="0.01" min="0.01"
+                placeholder="0,00"
+                value={reais}
+                onChange={e => handleReais(e.target.value)}
+                className="w-full border border-slate-200 rounded-xl px-3 py-2.5 pl-9 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+              />
+            </div>
+          </div>
+          {kg && parseFloat(kg) > 0 && (
+            <div className="bg-amber-50 rounded-xl px-3 py-2 text-xs text-amber-700 text-center">
+              <strong>{parseFloat(kg).toFixed(3)} kg</strong> × {fmt(precoKg)}/kg = <strong>{fmt(parseFloat(kg) * precoKg)}</strong>
+            </div>
+          )}
+        </div>
+        <div className="flex gap-3 p-5 pt-0">
+          <button onClick={onFechar} className="flex-1 py-2.5 border border-slate-200 rounded-xl text-sm text-slate-600 hover:bg-slate-50 transition-colors">Cancelar</button>
+          <button
+            onClick={confirmar}
+            disabled={!kg || parseFloat(kg) <= 0}
+            className="flex-1 py-2.5 bg-amber-500 text-white rounded-xl text-sm font-medium hover:bg-amber-600 disabled:opacity-50 transition-colors"
+          >
+            {itemExistente ? 'Atualizar' : 'Adicionar'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Motivos de cancelamento: label, status salvo no banco, voltaEstoque
+const MOTIVOS_CANCELAMENTO = [
+  { key: 'troca',          label: 'Troca de mercadoria', voltaEstoque: true  },
+  { key: 'avaria',         label: 'Avaria',              voltaEstoque: false },
+  { key: 'desistiu',       label: 'Desistiu',            voltaEstoque: true  },
+  { key: 'erro_lancamento',label: 'Erro de lançamento',  voltaEstoque: true  },
+  { key: 'devolvida',      label: 'Devolução',           voltaEstoque: true  },
+]
+
+// ── Modal de senha para ação protegida ────────────────────
+function ModalSenha({ onConfirmado, onCancelar }) {
+  const [senha, setSenha] = useState('')
+  const [erro, setErro]   = useState('')
+  const [verificando, setVerificando] = useState(false)
+
+  async function verificar() {
+    if (!senha) return
+    setVerificando(true)
+    setErro('')
+    try {
+      const ok = await window.api.auth.verificarSenha(senha)
+      if (ok) { onConfirmado() }
+      else { setErro('Senha incorreta. Tente novamente.') }
+    } finally {
+      setVerificando(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-sm w-full">
+        <div className="w-12 h-12 bg-amber-50 rounded-2xl flex items-center justify-center mb-4 mx-auto">
+          <AlertCircle size={22} className="text-amber-500" />
+        </div>
+        <h3 className="text-base font-bold text-slate-800 text-center mb-1">Ação protegida</h3>
+        <p className="text-sm text-slate-400 text-center mb-5">Digite a senha de administrador para continuar.</p>
+        <input
+          type="password"
+          autoFocus
+          value={senha}
+          onChange={e => { setSenha(e.target.value); setErro('') }}
+          onKeyDown={e => e.key === 'Enter' && verificar()}
+          placeholder="Senha"
+          className="w-full px-4 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 mb-2"
+        />
+        {erro && <p className="text-xs text-red-500 mb-3">{erro}</p>}
+        <div className="flex gap-3 mt-2">
+          <button onClick={onCancelar} disabled={verificando} className="flex-1 py-2.5 bg-slate-100 text-slate-700 rounded-xl text-sm font-medium hover:bg-slate-200 transition-colors disabled:opacity-50">
+            Cancelar
+          </button>
+          <button onClick={verificar} disabled={verificando || !senha} className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-amber-500 text-white rounded-xl text-sm font-medium hover:bg-amber-600 transition-colors disabled:opacity-60">
+            {verificando ? <Loader2 size={14} className="animate-spin" /> : null}
+            Confirmar
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Modal de confirmação de cancelamento ──────────────────
 function ModalCancelar({ venda, onConfirmar, onCancelar }) {
-  const [motivo, setMotivo] = useState('cancelada')
+  const [motivo, setMotivo] = useState(null)
   const [salvando, setSalvando] = useState(false)
 
+  const motivoSelecionado = MOTIVOS_CANCELAMENTO.find(m => m.key === motivo)
+
   async function confirmar() {
+    if (!motivo) return
     setSalvando(true)
-    await onConfirmar(venda.id, motivo)
+    await onConfirmar(venda.id, motivo, motivoSelecionado.voltaEstoque)
     setSalvando(false)
   }
 
@@ -65,35 +237,41 @@ function ModalCancelar({ venda, onConfirmar, onCancelar }) {
         <div className="w-12 h-12 bg-red-50 rounded-2xl flex items-center justify-center mb-4 mx-auto">
           <XCircle size={22} className="text-red-500" />
         </div>
-        <h3 className="text-base font-bold text-slate-800 text-center mb-1">Cancelar venda?</h3>
+        <h3 className="text-base font-bold text-slate-800 text-center mb-1">Cancelar / Devolver venda?</h3>
         <p className="text-sm text-slate-400 text-center mb-5">
           Venda #{venda.id} · {fmt(venda.total_final)}
         </p>
         <div className="mb-5">
-          <label className="block text-xs font-semibold text-slate-600 mb-2">Motivo</label>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setMotivo('cancelada')}
-              className={`flex-1 py-2 rounded-xl text-xs font-medium border transition-colors ${motivo === 'cancelada' ? 'bg-red-50 border-red-200 text-red-700' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'}`}
-            >
-              Cancelamento
-            </button>
-            <button
-              onClick={() => setMotivo('devolvida')}
-              className={`flex-1 py-2 rounded-xl text-xs font-medium border transition-colors ${motivo === 'devolvida' ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'}`}
-            >
-              Devolução
-            </button>
+          <label className="block text-xs font-semibold text-slate-600 mb-2">Selecione o motivo</label>
+          <div className="space-y-2">
+            {MOTIVOS_CANCELAMENTO.map(m => (
+              <button
+                key={m.key}
+                onClick={() => setMotivo(m.key)}
+                className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium border transition-colors ${motivo === m.key ? 'bg-red-50 border-red-300 text-red-700' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'}`}
+              >
+                <span>{m.label}</span>
+                {!m.voltaEstoque && (
+                  <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-semibold">Sem retorno ao estoque</span>
+                )}
+              </button>
+            ))}
           </div>
-          <p className="text-xs text-slate-400 mt-2">
-            O estoque será restaurado e o lançamento removido do financeiro.
-          </p>
+          {motivo && (
+            <p className="text-xs mt-2 px-1">
+              {motivoSelecionado.voltaEstoque
+                ? <span className="text-emerald-700">✓ Os itens voltarão ao estoque.</span>
+                : <span className="text-amber-700">⚠ Avaria: os itens <strong>não</strong> voltarão ao estoque.</span>
+              }
+              {' '}O lançamento será removido do financeiro.
+            </p>
+          )}
         </div>
         <div className="flex gap-3">
           <button onClick={onCancelar} disabled={salvando} className="flex-1 py-2.5 bg-slate-100 text-slate-700 rounded-xl text-sm font-medium hover:bg-slate-200 transition-colors disabled:opacity-50">
             Voltar
           </button>
-          <button onClick={confirmar} disabled={salvando} className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-red-600 text-white rounded-xl text-sm font-medium hover:bg-red-700 transition-colors disabled:opacity-60">
+          <button onClick={confirmar} disabled={salvando || !motivo} className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-red-600 text-white rounded-xl text-sm font-medium hover:bg-red-700 transition-colors disabled:opacity-60">
             {salvando ? <Loader2 size={14} className="animate-spin" /> : <XCircle size={14} />}
             {salvando ? 'Processando...' : 'Confirmar'}
           </button>
@@ -200,7 +378,9 @@ export default function Vendas() {
   const [finalizando, setFinalizando] = useState(false)
   const [historico, setHistorico] = useState([])
   const [carregando, setCarregando] = useState(false)
-  const [modalCancelar, setModalCancelar] = useState(null) // venda a cancelar
+  const [erroVenda, setErroVenda] = useState('')
+  const [modalCancelar, setModalCancelar] = useState(null)   // venda a cancelar
+  const [vendaParaSenha, setVendaParaSenha] = useState(null) // venda aguardando senha
   const [tipoPgto, setTipoPgto]       = useState('vista') // 'vista' | 'prazo'
   const [vencimento, setVencimento]   = useState('')
   const [buscaCliente, setBuscaCliente] = useState('')
@@ -218,6 +398,7 @@ export default function Vendas() {
   const [listaEntregas, setListaEntregas]   = useState([])
   const [filtroEntrega, setFiltroEntrega]   = useState('todos')
   const [entregaEditando, setEntregaEditando] = useState(null)
+  const [modalGranel, setModalGranel] = useState(null) // { produto, itemExistente? }
 
   // Carregar produtos do estoque
   const carregarProdutos = useCallback(async () => {
@@ -262,6 +443,11 @@ export default function Vendas() {
 
   // Adicionar ao carrinho
   function adicionarProduto(produto) {
+    if (produto.tipo === 'granel') {
+      const existente = carrinho.find(i => i.id_produto === produto.id)
+      setModalGranel({ produto, itemExistente: existente || null })
+      return
+    }
     setCarrinho(prev => {
       const existente = prev.find(i => i.id_produto === produto.id)
       if (existente) {
@@ -285,6 +471,27 @@ export default function Vendas() {
     })
   }
 
+  // Confirmar kg de granel
+  function confirmarGranel(produto, kg) {
+    const precoKg = produto.preco_por_kg || 0
+    setCarrinho(prev => {
+      const existente = prev.find(i => i.id_produto === produto.id)
+      const item = {
+        id_produto:   produto.id,
+        nome_produto: produto.nome,
+        preco_unit:   precoKg,
+        unidade:      'kg',
+        quantidade:   kg,
+        subtotal:     parseFloat((kg * precoKg).toFixed(2)),
+        estoque_max:  999999,
+        isGranel:     true,
+      }
+      if (existente) return prev.map(i => i.id_produto === produto.id ? item : i)
+      return [...prev, item]
+    })
+    setModalGranel(null)
+  }
+
   // Alterar quantidade no carrinho
   function alterarQtd(id_produto, novaQtd) {
     if (novaQtd <= 0) {
@@ -305,7 +512,8 @@ export default function Vendas() {
   // Totais
   const subtotal    = carrinho.reduce((s, i) => s + i.subtotal, 0)
   const descontoVal = Math.min(parseFloat(desconto || 0), subtotal)
-  const totalFinal  = subtotal - descontoVal
+  const taxaEntrega = isEntrega ? parseFloat(entregaTaxa || 0) : 0
+  const totalFinal  = subtotal - descontoVal + taxaEntrega
 
   // Finalizar venda
   async function finalizarVenda() {
@@ -315,6 +523,8 @@ export default function Vendas() {
       return
     }
     setFinalizando(true)
+    setErroVenda('')
+    const foiEntrega = isEntrega && entregaEndereco.trim() !== ''
     try {
       const resVenda = await window.api.vendas.criar({
         itens:           carrinho,
@@ -326,10 +536,9 @@ export default function Vendas() {
         nome_cliente:    nomeCliente.trim() || null,
         data_vencimento: vencimento || null,
       })
-      const venda = await window.api.vendas.buscarPorId(resVenda?.id || 0)
-      if (isEntrega && entregaEndereco.trim()) {
+      if (foiEntrega) {
         await window.api.entregas.criar({
-          id_venda:    resVenda?.id || venda?.id,
+          id_venda:    resVenda?.id,
           endereco:    entregaEndereco.trim(),
           taxa:        parseFloat(entregaTaxa || 0),
           responsavel: entregaResp.trim() || null,
@@ -350,16 +559,23 @@ export default function Vendas() {
       setEntregaResp('')
       setEntregaObs('')
       await carregarProdutos()
-      setAba(isEntrega ? 'entregas' : 'historico')
-      if (isEntrega) carregarEntregas(); else carregarHistorico()
+      if (foiEntrega) {
+        await carregarEntregas()
+        setAba('entregas')
+      } else {
+        await carregarHistorico()
+        setAba('historico')
+      }
+    } catch (e) {
+      setErroVenda(e.message || 'Erro ao finalizar venda. Tente novamente.')
     } finally {
       setFinalizando(false)
     }
   }
 
   // Cancelar venda
-  async function executarCancelamento(id, motivo) {
-    await window.api.vendas.cancelar(id, motivo)
+  async function executarCancelamento(id, motivo, voltaEstoque) {
+    await window.api.vendas.cancelar(id, motivo, voltaEstoque)
     setModalCancelar(null)
     carregarHistorico()
   }
@@ -408,7 +624,9 @@ export default function Vendas() {
 
             <div className="flex-1 overflow-y-auto grid grid-cols-2 lg:grid-cols-3 gap-3 content-start">
               {produtosFiltrados.map(produto => {
-                const semEstoque = produto.quantidade <= 0
+                const isGranel = produto.tipo === 'granel'
+                const semEstoque = !isGranel && produto.quantidade <= 0
+                const noCarrinho = carrinho.find(i => i.id_produto === produto.id)
                 return (
                   <button
                     key={produto.id}
@@ -417,20 +635,27 @@ export default function Vendas() {
                     className={`flex flex-col items-start gap-1 p-3.5 rounded-xl border text-left transition-all ${
                       semEstoque
                         ? 'bg-slate-50 border-slate-100 opacity-50 cursor-not-allowed'
-                        : 'bg-white border-slate-100 hover:border-emerald-200 hover:bg-emerald-50/30 hover:shadow-sm'
+                        : noCarrinho
+                          ? 'bg-emerald-50 border-emerald-200 shadow-sm'
+                          : 'bg-white border-slate-100 hover:border-emerald-200 hover:bg-emerald-50/30 hover:shadow-sm'
                     }`}
                   >
-                    <div className="w-8 h-8 bg-slate-100 rounded-lg flex items-center justify-center mb-1">
-                      <Package size={15} className="text-slate-500" />
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center mb-1 ${isGranel ? 'bg-amber-100' : 'bg-slate-100'}`}>
+                      {isGranel
+                        ? <Wheat size={15} className="text-amber-600" />
+                        : <Package size={15} className="text-slate-500" />
+                      }
                     </div>
                     <p className="text-sm font-semibold text-slate-800 leading-tight line-clamp-2">{produto.nome}</p>
                     <p className="text-xs text-slate-400">{produto.categoria}</p>
                     <div className="flex items-center justify-between w-full mt-1">
-                      <span className="text-sm font-bold text-emerald-700">{fmt(produto.preco_venda)}</span>
+                      <span className="text-sm font-bold text-emerald-700">
+                        {isGranel ? `${fmt(produto.preco_por_kg)}/kg` : fmt(produto.preco_venda)}
+                      </span>
                       <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
-                        semEstoque ? 'bg-red-50 text-red-500' : 'bg-slate-100 text-slate-500'
+                        semEstoque ? 'bg-red-50 text-red-500' : isGranel ? 'bg-amber-50 text-amber-600' : 'bg-slate-100 text-slate-500'
                       }`}>
-                        {semEstoque ? 'Sem estoque' : `${produto.quantidade} ${produto.unidade}`}
+                        {semEstoque ? 'Sem estoque' : isGranel ? `${Number(produto.quantidade).toFixed(1)} kg` : `${produto.quantidade} ${produto.unidade}`}
                       </span>
                     </div>
                   </button>
@@ -471,6 +696,10 @@ export default function Vendas() {
                     item={item}
                     onQtd={alterarQtd}
                     onRemover={removerItem}
+                    onEditarKg={it => {
+                      const prod = produtos.find(p => p.id === it.id_produto)
+                      if (prod) setModalGranel({ produto: prod, itemExistente: it })
+                    }}
                   />
                 ))
               )}
@@ -495,7 +724,7 @@ export default function Vendas() {
                   {showSugestoes && nomeCliente.length > 0 && (
                     <div className="absolute left-5 right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-10 max-h-32 overflow-y-auto">
                       {clientes.filter(c => c.nome.toLowerCase().includes(nomeCliente.toLowerCase())).slice(0, 5).map(c => (
-                        <button key={c.id} onMouseDown={() => { setNomeCliente(c.nome); setClienteSelecionado(c); setShowSugestoes(false) }}
+                        <button key={c.id} onMouseDown={() => { setNomeCliente(c.nome); setClienteSelecionado(c); setShowSugestoes(false); if (isEntrega && c.endereco) setEntregaEndereco(c.endereco) }}
                           className="w-full text-left px-3 py-1.5 text-xs hover:bg-emerald-50 text-slate-700 transition-colors">
                           {c.nome}
                         </button>
@@ -507,7 +736,7 @@ export default function Vendas() {
                 {/* Toggle Entrega */}
                 <div>
                   <button
-                    onClick={() => setIsEntrega(v => !v)}
+                    onClick={() => setIsEntrega(v => { const novo = !v; if (novo && clienteSelecionado?.endereco && !entregaEndereco) setEntregaEndereco(clienteSelecionado.endereco); return novo })}
                     className={`flex items-center gap-2 w-full px-3 py-2 rounded-xl text-xs font-medium border transition-colors ${isEntrega ? 'bg-blue-50 border-blue-300 text-blue-700' : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'}`}
                   >
                     <Truck size={13} />
@@ -578,6 +807,12 @@ export default function Vendas() {
                       <span>-{fmt(descontoVal)}</span>
                     </div>
                   )}
+                  {taxaEntrega > 0 && (
+                    <div className="flex justify-between text-xs text-blue-600">
+                      <span>Taxa de entrega</span>
+                      <span>+{fmt(taxaEntrega)}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between text-base font-bold text-slate-800 pt-1 border-t border-slate-100">
                     <span>Total</span>
                     <span className="text-emerald-700">{fmt(totalFinal)}</span>
@@ -633,6 +868,13 @@ export default function Vendas() {
                   </div>
                 )}
 
+                {/* Erro na venda */}
+                {erroVenda && (
+                  <div className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-xl px-3 py-2">
+                    {erroVenda}
+                  </div>
+                )}
+
                 {/* Botão finalizar */}
                 <button
                   onClick={finalizarVenda}
@@ -666,7 +908,7 @@ export default function Vendas() {
                 <CardVenda
                   key={venda.id}
                   venda={venda}
-                  onCancelar={setModalCancelar}
+                  onCancelar={setVendaParaSenha}
                 />
               ))}
             </div>
@@ -867,12 +1109,28 @@ export default function Vendas() {
         </div>
       )}
 
+      {/* Modal senha antes de cancelar */}
+      {vendaParaSenha && !modalCancelar && (
+        <ModalSenha
+          onConfirmado={() => { setModalCancelar(vendaParaSenha); setVendaParaSenha(null) }}
+          onCancelar={() => setVendaParaSenha(null)}
+        />
+      )}
+
       {/* Modal cancelar */}
       {modalCancelar && (
         <ModalCancelar
           venda={modalCancelar}
           onConfirmar={executarCancelamento}
           onCancelar={() => setModalCancelar(null)}
+        />
+      )}
+      {modalGranel && (
+        <ModalGranel
+          produto={modalGranel.produto}
+          itemExistente={modalGranel.itemExistente}
+          onConfirmar={confirmarGranel}
+          onFechar={() => setModalGranel(null)}
         />
       )}
     </div>

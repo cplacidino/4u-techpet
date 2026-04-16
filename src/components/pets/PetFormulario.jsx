@@ -31,8 +31,9 @@ function Input({ erro, ...props }) {
     <input
       {...props}
       className={`
-        w-full px-3 py-2.5 bg-white border rounded-xl text-sm text-slate-700
+        w-full px-3 py-2.5 border rounded-xl text-sm text-slate-700
         placeholder-slate-400 focus:outline-none focus:ring-2 focus:border-transparent transition-shadow
+        ${props.disabled ? 'bg-slate-50 text-slate-500 cursor-not-allowed' : 'bg-white'}
         ${erro ? 'border-red-300 focus:ring-red-400' : 'border-slate-200 focus:ring-emerald-500'}
       `}
     />
@@ -51,7 +52,7 @@ function Textarea({ ...props }) {
 
 // ── Formulário principal ──────────────────────────────────
 
-function PetFormulario({ pet, onSalvar, onCancelar }) {
+function PetFormulario({ pet, donoExistente, onSalvar, onCancelar }) {
   const editando = !!pet?.id
   const inputFotoRef = useRef()
   const [salvando, setSalvando] = useState(false)
@@ -60,7 +61,8 @@ function PetFormulario({ pet, onSalvar, onCancelar }) {
 
   // Dados do tutor
   const [tutor, setTutor] = useState({
-    nome: '', telefone: '', email: '', endereco: ''
+    nome: donoExistente?.nome || '', telefone: donoExistente?.telefone || '',
+    email: donoExistente?.email || '', endereco: donoExistente?.endereco || ''
   })
 
   // Dados do pet
@@ -134,7 +136,10 @@ function PetFormulario({ pet, onSalvar, onCancelar }) {
     try {
       let id_dono = pet?.id_dono
 
-      if (!editando) {
+      if (donoExistente) {
+        // Adicionar pet a tutor já existente — não cria nem edita o tutor
+        id_dono = donoExistente.id
+      } else if (!editando) {
         // Cria novo tutor
         const novoDono = await window.api.donos.criar({
           nome:     tutor.nome.trim(),
@@ -192,24 +197,27 @@ function PetFormulario({ pet, onSalvar, onCancelar }) {
         </button>
         <div>
           <h2 className="text-xl font-bold text-slate-800">
-            {editando ? `Editar — ${pet.nome}` : 'Novo Pet'}
+            {editando ? `Editar — ${pet.nome}` : donoExistente ? `Novo pet para ${donoExistente.nome}` : 'Novo Pet'}
           </h2>
           <p className="text-sm text-slate-400 mt-0.5">
-            {editando ? 'Atualize os dados do pet e do tutor' : 'Preencha os dados do tutor e do pet'}
+            {editando ? 'Atualize os dados do pet e do tutor' : donoExistente ? 'Preencha os dados do novo pet' : 'Preencha os dados do tutor e do pet'}
           </p>
         </div>
       </div>
 
       {/* ── Seção 1: Tutor ─────────────────────────────── */}
-      <div className="bg-white rounded-2xl border border-slate-100 shadow-soft p-5">
+      <div className={`bg-white rounded-2xl border shadow-soft p-5 ${donoExistente ? 'border-blue-100 bg-blue-50/30' : 'border-slate-100'}`}>
         <div className="flex items-center gap-2.5 mb-4 pb-4 border-b border-slate-50">
           <div className="w-8 h-8 bg-blue-50 rounded-xl flex items-center justify-center flex-shrink-0">
             <User size={15} className="text-blue-600" />
           </div>
-          <div>
+          <div className="flex-1">
             <p className="text-sm font-semibold text-slate-800">Dados do Tutor</p>
-            <p className="text-xs text-slate-400">Responsável pelo pet</p>
+            <p className="text-xs text-slate-400">{donoExistente ? 'Tutor já cadastrado — não editável aqui' : 'Responsável pelo pet'}</p>
           </div>
+          {donoExistente && (
+            <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-semibold">Existente</span>
+          )}
         </div>
 
         <div className="space-y-3">
@@ -219,6 +227,7 @@ function PetFormulario({ pet, onSalvar, onCancelar }) {
               onChange={e => setT('nome', e.target.value)}
               placeholder="Ex: João da Silva"
               erro={erros.nome_tutor}
+              disabled={!!donoExistente}
             />
           </Campo>
 
@@ -229,6 +238,7 @@ function PetFormulario({ pet, onSalvar, onCancelar }) {
                 onChange={e => setT('telefone', e.target.value)}
                 placeholder="(00) 00000-0000"
                 type="tel"
+                disabled={!!donoExistente}
               />
             </Campo>
             <Campo label="E-mail">
@@ -237,6 +247,7 @@ function PetFormulario({ pet, onSalvar, onCancelar }) {
                 onChange={e => setT('email', e.target.value)}
                 placeholder="email@exemplo.com"
                 type="email"
+                disabled={!!donoExistente}
               />
             </Campo>
           </div>
@@ -246,6 +257,7 @@ function PetFormulario({ pet, onSalvar, onCancelar }) {
               value={tutor.endereco}
               onChange={e => setT('endereco', e.target.value)}
               placeholder="Rua, número, bairro, cidade"
+              disabled={!!donoExistente}
             />
           </Campo>
         </div>

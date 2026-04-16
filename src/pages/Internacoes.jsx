@@ -324,6 +324,15 @@ function InternacaoFormulario({ internacao, onSalvar, onCancelar }) {
     window.api.veterinarios.listarAtivos().then(setVets)
     if (internacao?.id_pet) {
       window.api.pets.buscarPorId(internacao.id_pet).then(pet => { if (pet) setPetSelecionado(pet) })
+    } else {
+      const raw = sessionStorage.getItem('clinica_pet_preselect')
+      if (raw) {
+        try {
+          const { id } = JSON.parse(raw)
+          window.api.pets.buscarPorId(id).then(pet => { if (pet) setPetSelecionado(pet) })
+          sessionStorage.removeItem('clinica_pet_preselect')
+        } catch {}
+      }
     }
   }, [internacao])
 
@@ -741,6 +750,9 @@ export default function Internacoes() {
   }, [])
 
   useEffect(() => { carregar() }, [carregar])
+  useEffect(() => {
+    if (sessionStorage.getItem('clinica_pet_preselect')) nova()
+  }, []) // eslint-disable-line
 
   function verFicha(i)     { setInternacaoAtual(i); setView('detalhe') }
   function editar(i)       { setInternacaoAtual(i); setView('formulario') }

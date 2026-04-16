@@ -190,6 +190,15 @@ function CirurgiaFormulario({ cirurgia, onSalvar, onCancelar }) {
     window.api.veterinarios.listarAtivos().then(setVets)
     if (cirurgia?.id_pet) {
       window.api.pets.buscarPorId(cirurgia.id_pet).then(p => { if (p) setPetSelecionado(p) })
+    } else {
+      const raw = sessionStorage.getItem('clinica_pet_preselect')
+      if (raw) {
+        try {
+          const { id } = JSON.parse(raw)
+          window.api.pets.buscarPorId(id).then(p => { if (p) setPetSelecionado(p) })
+          sessionStorage.removeItem('clinica_pet_preselect')
+        } catch {}
+      }
     }
   }, [cirurgia])
 
@@ -672,6 +681,9 @@ export default function Cirurgias() {
   }, [])
 
   useEffect(() => { carregar() }, [carregar])
+  useEffect(() => {
+    if (sessionStorage.getItem('clinica_pet_preselect')) nova()
+  }, []) // eslint-disable-line
 
   function verFicha(c)  { setCirurgiaAtual(c); setView('ficha') }
   function editar(c)    { setCirurgiaAtual(c); setView('formulario') }

@@ -266,6 +266,12 @@ function AgendaFormulario({ agendamento, dataInicial, onSalvar, onCancelar }) {
   const [salvando, setSalvando] = useState(false)
   const [erros, setErros]       = useState({})
 
+  // ── Estados de vínculo com plano ─────────────────────────
+  const [assinaturasPlano, setAssinaturasPlano]   = useState([])
+  const [vinculandoPlano, setVinculandoPlano]     = useState(false)
+  const [assinIdSel, setAssinIdSel]               = useState(null)
+  const [servicoPlano, setServicoPlanoo]           = useState('')
+
   const [petSelecionado, setPetSelecionado] = useState(
     agendamento ? {
       id:        agendamento.id_pet,
@@ -290,12 +296,52 @@ function AgendaFormulario({ agendamento, dataInicial, onSalvar, onCancelar }) {
     if (erros[campo]) setErros(e => ({ ...e, [campo]: null }))
   }
 
+  // Carrega assinaturas ativas quando pet é selecionado (só em criação)
+  useEffect(() => {
+    setAssinaturasPlano([])
+    setVinculandoPlano(false)
+    setAssinIdSel(null)
+    setServicoPlanoo('')
+    if (petSelecionado?.id && !editando) {
+      window.api.planos.assinaturasAtivasPorPet(petSelecionado.id)
+        .then(lista => setAssinaturasPlano(lista || []))
+        .catch(() => {})
+    }
+  }, [petSelecionado?.id])
+
+  // Ao ativar vínculo com plano, pré-seleciona a primeira assinatura e primeiro serviço
+  useEffect(() => {
+    if (vinculandoPlano && assinaturasPlano.length > 0) {
+      const assin = assinaturasPlano[0]
+      setAssinIdSel(assin.id)
+      const primeiro = (assin.resumo_ciclo?.resumo || []).find(r => r.quantidade_restante > 0)
+      if (primeiro) { setServicoPlanoo(primeiro.servico); setD('servico', primeiro.servico) }
+    } else if (!vinculandoPlano) {
+      setAssinIdSel(null)
+      setServicoPlanoo('')
+    }
+  }, [vinculandoPlano])
+
+  // Ao trocar de assinatura, atualiza o serviço disponível
+  useEffect(() => {
+    if (!assinIdSel) return
+    const assin = assinaturasPlano.find(a => a.id === assinIdSel)
+    const primeiro = (assin?.resumo_ciclo?.resumo || []).find(r => r.quantidade_restante > 0)
+    if (primeiro) { setServicoPlanoo(primeiro.servico); setD('servico', primeiro.servico) }
+    else { setServicoPlanoo('') }
+  }, [assinIdSel])
+
+  // Dados derivados do plano selecionado
+  const assinaturaAtual = assinaturasPlano.find(a => a.id === assinIdSel)
+  const servicosDoPlano = (assinaturaAtual?.resumo_ciclo?.resumo || []).filter(r => r.quantidade_restante > 0)
+
   function validar() {
     const e = {}
-    if (!petSelecionado)   e.pet     = 'Selecione um pet'
-    if (!dados.servico)    e.servico = 'Selecione o serviço'
-    if (!dados.data)       e.data    = 'Informe a data'
-    if (!dados.hora)       e.hora    = 'Informe o horário'
+    if (!petSelecionado) e.pet = 'Selecione um pet'
+    if (!dados.servico)  e.servico = vinculandoPlano ? 'Selecione o serviço do plano' : 'Selecione o serviço'
+    if (!dados.data)     e.data = 'Informe a data'
+    if (!dados.hora)     e.hora = 'Informe o horário'
+    if (vinculandoPlano && !assinaturaAtual) e.plano = 'Selecione a assinatura'
     setErros(e)
     return Object.keys(e).length === 0
   }
@@ -304,20 +350,33 @@ function AgendaFormulario({ agendamento, dataInicial, onSalvar, onCancelar }) {
     if (!validar()) return
     setSalvando(true)
     try {
-      const payload = {
-        id_pet:      petSelecionado.id,
-        servico:     dados.servico,
-        data:        dados.data,
-        hora:        dados.hora,
-        status:      dados.status,
-        valor:       dados.valor ? parseFloat(dados.valor) : null,
-        observacoes: dados.observacoes || null,
-      }
-
-      if (editando) {
-        await window.api.agendamentos.editar(agendamento.id, payload)
+      if (vinculandoPlano && assinaturaAtual && servicoPlano) {
+        // Agendamento vinculado ao plano: cria agendamento + uso juntos
+        await window.api.planos.agendarSessoes(assinaturaAtual.id, [{
+          id_ciclo:    assinaturaAtual.resumo_ciclo.ciclo.id,
+          id_pet:      petSelecionado.id,
+          servico:     servicoPlano,
+          data:        dados.data,
+          hora:        dados.hora,
+          nome_plano:  assinaturaAtual.nome_plano,
+          nome_dono:   assinaturaAtual.nome_dono,
+          observacoes: dados.observacoes || null,
+        }])
       } else {
-        await window.api.agendamentos.criar(payload)
+        const payload = {
+          id_pet:      petSelecionado.id,
+          servico:     dados.servico,
+          data:        dados.data,
+          hora:        dados.hora,
+          status:      dados.status,
+          valor:       dados.valor ? parseFloat(dados.valor) : null,
+          observacoes: dados.observacoes || null,
+        }
+        if (editando) {
+          await window.api.agendamentos.editar(agendamento.id, payload)
+        } else {
+          await window.api.agendamentos.criar(payload)
+        }
       }
       onSalvar()
     } catch (err) {
@@ -361,29 +420,78 @@ function AgendaFormulario({ agendamento, dataInicial, onSalvar, onCancelar }) {
           {erros.pet && <p className="text-xs text-red-500 mt-1">{erros.pet}</p>}
         </Campo>
 
-        {/* Seletor de serviço */}
-        <Campo label="Serviço" required erro={erros.servico}>
-          <div className="flex flex-wrap gap-2">
-            {SERVICOS.map(s => (
-              <button
-                key={s.label}
-                type="button"
-                onClick={() => setD('servico', s.label)}
-                className={`
-                  flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium border
-                  transition-all duration-150
-                  ${dados.servico === s.label
-                    ? 'bg-emerald-600 text-white border-emerald-600 scale-105 shadow-sm'
-                    : 'bg-white text-slate-600 border-slate-200 hover:border-emerald-300 hover:text-emerald-700'}
-                `}
-              >
-                <span>{s.emoji}</span>
-                {s.label}
-              </button>
-            ))}
+        {/* Vínculo com plano — aparece só em criação se o cliente tiver plano ativo */}
+        {assinaturasPlano.length > 0 && !editando && (
+          <div className={`p-3 rounded-xl border transition-colors ${vinculandoPlano ? 'border-purple-300 bg-purple-50' : 'border-slate-200 bg-slate-50'}`}>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs font-semibold text-purple-700">📋 Cliente tem plano ativo</span>
+              <div className="flex gap-1">
+                <button type="button"
+                  onClick={() => setVinculandoPlano(false)}
+                  className={`px-2.5 py-1 text-xs rounded-lg font-medium border transition-colors ${!vinculandoPlano ? 'bg-slate-600 text-white border-slate-600' : 'bg-white text-slate-600 border-slate-300 hover:border-slate-400'}`}
+                >Avulso</button>
+                <button type="button"
+                  onClick={() => setVinculandoPlano(true)}
+                  className={`px-2.5 py-1 text-xs rounded-lg font-medium border transition-colors ${vinculandoPlano ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-purple-600 border-purple-300 hover:border-purple-400'}`}
+                >Usar plano</button>
+              </div>
+            </div>
+
+            {vinculandoPlano && (
+              <div className="space-y-2 mt-2">
+                {assinaturasPlano.length > 1 && (
+                  <select value={assinIdSel || ''} onChange={e => setAssinIdSel(parseInt(e.target.value))}
+                    className="w-full border border-purple-300 rounded-lg px-2 py-1.5 text-xs bg-white focus:outline-none focus:border-purple-500">
+                    {assinaturasPlano.map(a => (
+                      <option key={a.id} value={a.id}>{a.nome_plano}{a.nome_pet ? ` — ${a.nome_pet}` : ''}</option>
+                    ))}
+                  </select>
+                )}
+                {servicosDoPlano.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {servicosDoPlano.map(r => (
+                      <button key={r.servico} type="button"
+                        onClick={() => { setServicoPlanoo(r.servico); setD('servico', r.servico) }}
+                        className={`px-2.5 py-1 text-xs rounded-lg font-medium border transition-colors ${servicoPlano === r.servico ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-purple-600 border-purple-300 hover:bg-purple-50'}`}
+                      >
+                        {r.servico} <span className="opacity-70">({r.quantidade_restante} rest.)</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-red-500">Nenhum serviço disponível neste ciclo.</p>
+                )}
+                {erros.plano && <p className="text-xs text-red-500">{erros.plano}</p>}
+              </div>
+            )}
           </div>
-          {erros.servico && <p className="text-xs text-red-500 mt-1">{erros.servico}</p>}
-        </Campo>
+        )}
+
+        {/* Seletor de serviço — oculto quando usando plano */}
+        {!vinculandoPlano && (
+          <Campo label="Serviço" required erro={erros.servico}>
+            <div className="flex flex-wrap gap-2">
+              {SERVICOS.map(s => (
+                <button
+                  key={s.label}
+                  type="button"
+                  onClick={() => setD('servico', s.label)}
+                  className={`
+                    flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium border
+                    transition-all duration-150
+                    ${dados.servico === s.label
+                      ? 'bg-emerald-600 text-white border-emerald-600 scale-105 shadow-sm'
+                      : 'bg-white text-slate-600 border-slate-200 hover:border-emerald-300 hover:text-emerald-700'}
+                  `}
+                >
+                  <span>{s.emoji}</span>
+                  {s.label}
+                </button>
+              ))}
+            </div>
+            {erros.servico && <p className="text-xs text-red-500 mt-1">{erros.servico}</p>}
+          </Campo>
+        )}
 
         {/* Data e hora */}
         <div className="grid grid-cols-2 gap-3">
@@ -405,22 +513,24 @@ function AgendaFormulario({ agendamento, dataInicial, onSalvar, onCancelar }) {
           </Campo>
         </div>
 
-        {/* Valor e status */}
-        <div className="grid grid-cols-2 gap-3">
-          <Campo label="Valor estimado (R$)">
-            <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">R$</span>
-              <Input
-                type="number"
-                step="0.01"
-                min="0"
-                value={dados.valor}
-                onChange={e => setD('valor', e.target.value)}
-                placeholder="0,00"
-                className="pl-9"
-              />
-            </div>
-          </Campo>
+        {/* Valor e status — valor oculto quando usando plano */}
+        <div className={`grid gap-3 ${vinculandoPlano ? 'grid-cols-1' : 'grid-cols-2'}`}>
+          {!vinculandoPlano && (
+            <Campo label="Valor estimado (R$)">
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">R$</span>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={dados.valor}
+                  onChange={e => setD('valor', e.target.value)}
+                  placeholder="0,00"
+                  className="pl-9"
+                />
+              </div>
+            </Campo>
+          )}
           <Campo label="Status">
             <select
               value={dados.status}

@@ -14,6 +14,7 @@
 const { ipcMain, dialog, shell, app } = require('electron')
 const path   = require('path')
 const fs     = require('fs')
+const crypto = require('crypto')
 const db     = require('./database')
 const backup = require('./backup')
 
@@ -42,7 +43,14 @@ function registrarHandlers() {
   ipcMain.handle('donos:buscarPorNome', (_, nome)        => db.donos.buscarPorNome(nome))
   ipcMain.handle('donos:buscarComPets', (_, id)          => db.donos.buscarComPets(id))
   ipcMain.handle('donos:editar',        (_, { id, dados }) => db.donos.editar(id, dados))
-  ipcMain.handle('donos:deletar',       (_, id)          => db.donos.deletar(id))
+  ipcMain.handle('donos:deletar', (_, id) => {
+    try { return db.donos.deletar(id) }
+    catch (e) {
+      if (e.code === 'SQLITE_CONSTRAINT_FOREIGNKEY' || (e.message && e.message.includes('FOREIGN KEY')))
+        throw new Error('Este tutor possui contas em aberto ou planos ativos. Quite os débitos e cancele os planos antes de excluir.')
+      throw e
+    }
+  })
   ipcMain.handle('donos:total',         ()               => db.donos.total())
 
   // ────────────────────────────────────────
@@ -69,6 +77,7 @@ function registrarHandlers() {
   ipcMain.handle('agendamentos:atualizarStatus',(_, { id, status }) => db.agendamentos.atualizarStatus(id, status))
   ipcMain.handle('agendamentos:editar',         (_, { id, dados })  => db.agendamentos.editar(id, dados))
   ipcMain.handle('agendamentos:deletar',        (_, id)             => db.agendamentos.deletar(id))
+  ipcMain.handle('agendamentos:excluir',        (_, id)             => db.agendamentos.excluir(id))
   ipcMain.handle('agendamentos:total',          ()                  => db.agendamentos.total())
 
   // ────────────────────────────────────────
@@ -98,7 +107,16 @@ function registrarHandlers() {
   ipcMain.handle('estoque:movimentar',           (_, { id, tipo, qtd, motivo })    => db.estoque.movimentar(id, tipo, qtd, motivo))
   ipcMain.handle('estoque:historicoMovimentacoes',(_, id)                          => db.estoque.historicoMovimentacoes(id))
   ipcMain.handle('estoque:editar',               (_, { id, dados })                => db.estoque.editar(id, dados))
-  ipcMain.handle('estoque:deletar',              (_, id)                           => db.estoque.deletar(id))
+  ipcMain.handle('estoque:deletar', (_, id) => {
+    try { return db.estoque.deletar(id) }
+    catch (e) {
+      if (e.code === 'SQLITE_CONSTRAINT_FOREIGNKEY' || (e.message && e.message.includes('FOREIGN KEY')))
+        throw new Error('Este produto está vinculado a vendas e não pode ser excluído.')
+      throw e
+    }
+  })
+  ipcMain.handle('estoque:listarPacotes',    ()                          => db.estoque.listarPacotes())
+  ipcMain.handle('estoque:puxarPacotes',     (_, { id, n })              => db.estoque.puxarPacotesManual(id, n))
 
   // ────────────────────────────────────────
   // VETERINÁRIOS
@@ -185,9 +203,10 @@ function registrarHandlers() {
   // VENDAS (PDV)
   // ────────────────────────────────────────
   ipcMain.handle('vendas:criar',    (_, dados)           => db.vendas.criar(dados))
-  ipcMain.handle('vendas:listar',   ()                   => db.vendas.listar())
+  ipcMain.handle('vendas:listar',            ()                   => db.vendas.listar())
+  ipcMain.handle('vendas:listarCanceladas',  ()                   => db.vendas.listarCanceladas())
   ipcMain.handle('vendas:buscarPorId', (_, id)           => db.vendas.buscarPorId(id))
-  ipcMain.handle('vendas:cancelar', (_, { id, motivo })  => db.vendas.cancelar(id, motivo))
+  ipcMain.handle('vendas:cancelar', (_, { id, motivo, voltaEstoque }) => db.vendas.cancelar(id, motivo, voltaEstoque))
   ipcMain.handle('vendas:totalMes', ()                   => db.vendas.totalMes())
 
   ipcMain.handle('exames:abrirArquivo', (_, arquivoPath) => {
@@ -291,6 +310,7 @@ function registrarHandlers() {
   ipcMain.handle('fiado:buscarPagamentos',   (_, id_conta)            => db.contasReceber.buscarPagamentos(id_conta))
   ipcMain.handle('fiado:totalEmAberto',      ()                       => db.contasReceber.totalEmAberto())
   ipcMain.handle('fiado:deletar',            (_, id)                  => db.contasReceber.deletar(id))
+  ipcMain.handle('fiado:alertasVencimento',  ()                       => db.contasReceber.alertasVencimento())
 
   // ────────────────────────────────────────
   // CONFIGURAÇÕES (Admin)
@@ -350,19 +370,39 @@ function registrarHandlers() {
   ipcMain.handle('planos:criarTipo',          (_, dados)      => db.planos.criarTipo(dados))
   ipcMain.handle('planos:listarTipos',        ()              => db.planos.listarTipos())
   ipcMain.handle('planos:editarTipo',         (_, { id, dados }) => db.planos.editarTipo(id, dados))
-  ipcMain.handle('planos:deletarTipo',        (_, id)         => db.planos.deletarTipo(id))
+  ipcMain.handle('planos:deletarTipo', (_, id) => {
+    try {
+      db.planos.deletarTipo(id)
+      return { ok: true }
+    } catch (e) {
+      if (e.code === 'SQLITE_CONSTRAINT_FOREIGNKEY' || (e.message && e.message.includes('FOREIGN KEY')))
+        return { ok: false, erro: 'Este tipo de plano possui assinaturas ativas e não pode ser excluído. Cancele ou exclua as assinaturas primeiro.' }
+      return { ok: false, erro: 'Erro ao excluir: ' + e.message }
+    }
+  })
   ipcMain.handle('planos:criarAssinatura',    (_, dados)      => db.planos.criarAssinatura(dados))
   ipcMain.handle('planos:listarAssinaturas',  ()              => db.planos.listarAssinaturas())
   ipcMain.handle('planos:buscarAssinatura',   (_, id)         => db.planos.buscarAssinaturaPorId(id))
   ipcMain.handle('planos:alterarStatus',      (_, { id, status }) => db.planos.alterarStatus(id, status))
   ipcMain.handle('planos:deletarAssinatura',  (_, id)         => db.planos.deletarAssinatura(id))
-  ipcMain.handle('planos:confirmarPagamento', (_, id_ciclo)   => db.planos.confirmarPagamento(id_ciclo))
+  ipcMain.handle('planos:confirmarPagamento', (_, { id_ciclo, data_pagamento }) => db.planos.confirmarPagamento(id_ciclo, data_pagamento))
   ipcMain.handle('planos:registrarUso',       (_, dados)      => db.planos.registrarUso(dados))
   ipcMain.handle('planos:listarUsosCiclo',    (_, id_ciclo)   => db.planos.listarUsosPorCiclo(id_ciclo))
-  ipcMain.handle('planos:deletarUso',         (_, id)         => db.planos.deletarUso(id))
+  ipcMain.handle('planos:deletarUso',                (_, id)       => db.planos.deletarUso(id))
+  ipcMain.handle('planos:listarUsosPorAssinatura',   (_, id)       => db.planos.listarUsosPorAssinatura(id))
+  ipcMain.handle('planos:listarCiclosPorAssinatura', (_, id)       => db.planos.listarCiclosPorAssinatura(id))
   ipcMain.handle('planos:resumoCicloAtual',   (_, id_assin)   => db.planos.resumoCicloAtual(id_assin))
-  ipcMain.handle('planos:assinaturasAtivas',  (_, id_dono)    => db.planos.assinaturasAtivasDono(id_dono))
-  ipcMain.handle('planos:alertas',            ()              => db.planos.alertas())
+  ipcMain.handle('planos:assinaturasAtivas',       (_, id_dono)               => db.planos.assinaturasAtivasDono(id_dono))
+  ipcMain.handle('planos:assinaturasAtivasPorPet', (_, id_pet)                => db.planos.assinaturasAtivasPorPet(id_pet))
+  ipcMain.handle('planos:agendarSessoes',          (_, { id_assinatura, sessoes }) => db.planos.agendarSessoesDePlano(id_assinatura, sessoes))
+  ipcMain.handle('planos:alertas',                 ()                         => db.planos.alertas())
+  ipcMain.handle('planos:renovarCiclo',            (_, id_assin)              => db.planos.renovarCiclo(id_assin))
+
+  // ────────────────────────────────────────
+  // CLÍNICA — Panorama
+  // ────────────────────────────────────────
+  ipcMain.handle('clinica:historicoPet', (_, id_pet)  => db.clinica.historicoPet(id_pet))
+  ipcMain.handle('clinica:faturar',      (_, dados)   => db.clinica.faturar(dados))
 
   // ────────────────────────────────────────
   // ENTREGAS
@@ -398,10 +438,11 @@ function registrarHandlers() {
       if (!res.ok) return { ok: false, erro: dados.erro || 'Erro ao fazer login' }
 
       salvarAuth({
-        token:       dados.token,
-        nome:        dados.nome,
+        token:        dados.token,
+        nome:         dados.nome,
         email,
-        salvoEm:     Date.now(),
+        senhaHash:    crypto.createHash('sha256').update(senha).digest('hex'),
+        salvoEm:      Date.now(),
         verificadoEm: Date.now(),
       })
       return { ok: true, nome: dados.nome }
@@ -435,6 +476,35 @@ function registrarHandlers() {
       const horas = (Date.now() - (dados.verificadoEm || 0)) / 3600000
       if (horas < 24) return { valido: true, nome: dados.nome, offline: true }
       return { valido: false, motivo: 'Sem conexão há mais de 24h. Conecte à internet para continuar.' }
+    }
+  })
+
+  // Verifica senha para desbloqueio do financeiro
+  ipcMain.handle('auth:verificarSenha', async (_, senha) => {
+    const dados = lerAuth()
+    if (!dados) return { ok: false }
+
+    // Comparação local pelo hash (funciona offline)
+    if (dados.senhaHash) {
+      const hash = crypto.createHash('sha256').update(senha).digest('hex')
+      return { ok: hash === dados.senhaHash }
+    }
+
+    // Fallback: tenta verificar pela API (instalações antigas sem hash)
+    try {
+      const res = await fetch(`${API_URL}/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: dados.email, senha }),
+      })
+      if (res.ok) {
+        // Salva o hash para as próximas vezes
+        salvarAuth({ ...dados, senhaHash: crypto.createHash('sha256').update(senha).digest('hex') })
+        return { ok: true }
+      }
+      return { ok: false }
+    } catch {
+      return { ok: false, erro: 'Sem conexão. Faça login novamente para habilitar verificação offline.' }
     }
   })
 

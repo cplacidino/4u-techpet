@@ -300,7 +300,7 @@ function HistoricoClinico({ consultas, cirurgias, internacoes, loading, nomePet 
 
 // ── Perfil do pet ─────────────────────────────────────────
 
-function PetPerfil({ pet: petInicial, onEditar, onVoltar, onDeletado }) {
+function PetPerfil({ pet: petInicial, onEditar, onVoltar, onDeletado, onNovoPetParaTutor }) {
   const [pet, setPet] = useState(petInicial)
   const [tab, setTab] = useState('dados')
   const [agendamentos, setAgendamentos] = useState([])
@@ -568,6 +568,17 @@ function PetPerfil({ pet: petInicial, onEditar, onVoltar, onDeletado }) {
                 {/* Sem contato cadastrado */}
                 {!tutor.telefone && !tutor.email && !tutor.endereco && (
                   <p className="text-sm text-slate-400 text-center py-4">Nenhum contato cadastrado para este tutor.</p>
+                )}
+
+                {/* Botão cadastrar novo pet para este tutor */}
+                {onNovoPetParaTutor && (
+                  <button
+                    onClick={() => onNovoPetParaTutor(tutor)}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 border-2 border-dashed border-emerald-200 text-emerald-600 hover:border-emerald-400 hover:bg-emerald-50 rounded-xl text-sm font-medium transition-colors"
+                  >
+                    <PawPrint size={14} />
+                    Cadastrar outro pet para {tutor.nome.split(' ')[0]}
+                  </button>
                 )}
               </div>
             )}

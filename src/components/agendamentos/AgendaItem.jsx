@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Edit2, CheckCircle2, XCircle, RotateCcw, Clock, Loader2, DollarSign, MessageCircle } from 'lucide-react'
+import { Edit2, CheckCircle2, XCircle, RotateCcw, Clock, Loader2, DollarSign, MessageCircle, Trash2, Eye, EyeOff, Lock } from 'lucide-react'
 
 // ── Configuração visual por serviço ──────────────────────
 const SERVICO_CONFIG = {
@@ -18,6 +18,7 @@ const STATUS_CONFIG = {
   confirmado: { label: 'Confirmado', bg: 'bg-violet-50 text-violet-600 border-violet-100' },
   concluido:  { label: 'Concluído',  bg: 'bg-emerald-50 text-emerald-600 border-emerald-100' },
   cancelado:  { label: 'Cancelado',  bg: 'bg-red-50    text-red-500   border-red-100'    },
+  excluido:   { label: 'Excluído',   bg: 'bg-slate-100 text-slate-400 border-slate-200'  },
 }
 
 const ESPECIE_EMOJI = {
@@ -27,6 +28,9 @@ const ESPECIE_EMOJI = {
 
 // ── Modal de conclusão ────────────────────────────────────
 function ModalConcluir({ agendamento, onConfirmar, onCancelar }) {
+  // Detecta se este agendamento veio de um plano de assinatura
+  const ehDePlano = agendamento.observacoes && agendamento.observacoes.startsWith('[Plano:')
+
   const [valor, setValor]           = useState(agendamento.valor != null ? String(agendamento.valor) : '')
   const [tipoPgto, setTipoPgto]     = useState('vista')
   const [vencimento, setVencimento] = useState('')
@@ -35,7 +39,8 @@ function ModalConcluir({ agendamento, onConfirmar, onCancelar }) {
 
   async function confirmar() {
     setSalvando(true)
-    await onConfirmar(valor ? parseFloat(valor) : null, tipoPgto, vencimento, observacoes)
+    // Se for de plano, não cobra valor extra (já está no plano)
+    await onConfirmar(ehDePlano ? null : (valor ? parseFloat(valor) : null), tipoPgto, vencimento, observacoes)
     setSalvando(false)
   }
 
@@ -53,53 +58,69 @@ function ModalConcluir({ agendamento, onConfirmar, onCancelar }) {
           {' '}— {agendamento.servico}
         </p>
 
-        {/* Valor cobrado */}
-        <div className="mb-4">
-          <label className="block text-xs font-semibold text-slate-600 mb-1.5">
-            Valor cobrado (R$)
-          </label>
-          <div className="relative">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-medium">R$</span>
-            <input
-              type="number" step="0.01" min="0"
-              value={valor} onChange={e => setValor(e.target.value)}
-              placeholder="0,00"
-              className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-            />
+        {/* Aviso quando é de plano */}
+        {ehDePlano ? (
+          <div className="mb-5 px-4 py-3 bg-purple-50 border border-purple-200 rounded-xl flex items-start gap-2">
+            <DollarSign size={14} className="text-purple-500 mt-0.5 flex-shrink-0" />
+            <div>
+              <p className="text-xs font-semibold text-purple-700">Serviço do plano de assinatura</p>
+              <p className="text-xs text-purple-600 mt-0.5">
+                {agendamento.observacoes.replace('[Plano:', '').replace(']', '').trim()}
+              </p>
+              <p className="text-xs text-purple-500 mt-1">Pagamento já incluso no plano — não será cobrado separadamente.</p>
+            </div>
           </div>
-        </div>
+        ) : (
+          <>
+            {/* Valor cobrado */}
+            <div className="mb-4">
+              <label className="block text-xs font-semibold text-slate-600 mb-1.5">
+                Valor cobrado (R$)
+              </label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-medium">R$</span>
+                <input
+                  type="number" step="0.01" min="0"
+                  value={valor} onChange={e => setValor(e.target.value)}
+                  placeholder="0,00"
+                  className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+            </div>
 
-        {/* Tipo de pagamento */}
-        <div className="mb-4">
-          <label className="block text-xs font-semibold text-slate-600 mb-1.5">Forma de pagamento</label>
-          <div className="flex gap-2">
-            <button onClick={() => setTipoPgto('vista')}
-              className={`flex-1 py-2 rounded-xl text-xs font-medium border transition-colors ${tipoPgto === 'vista' ? 'bg-emerald-50 border-emerald-300 text-emerald-700' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'}`}>
-              À Vista
-            </button>
-            <button onClick={() => setTipoPgto('prazo')}
-              className={`flex-1 py-2 rounded-xl text-xs font-medium border transition-colors ${tipoPgto === 'prazo' ? 'bg-amber-50 border-amber-300 text-amber-700' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'}`}>
-              Fiado / A Prazo
-            </button>
-          </div>
-        </div>
+            {/* Tipo de pagamento */}
+            <div className="mb-4">
+              <label className="block text-xs font-semibold text-slate-600 mb-1.5">Forma de pagamento</label>
+              <div className="flex gap-2">
+                <button onClick={() => setTipoPgto('vista')}
+                  className={`flex-1 py-2 rounded-xl text-xs font-medium border transition-colors ${tipoPgto === 'vista' ? 'bg-emerald-50 border-emerald-300 text-emerald-700' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'}`}>
+                  À Vista
+                </button>
+                <button onClick={() => setTipoPgto('prazo')}
+                  className={`flex-1 py-2 rounded-xl text-xs font-medium border transition-colors ${tipoPgto === 'prazo' ? 'bg-amber-50 border-amber-300 text-amber-700' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'}`}>
+                  Fiado / A Prazo
+                </button>
+              </div>
+            </div>
 
-        {/* Vencimento (só quando fiado) */}
-        {tipoPgto === 'prazo' && (
-          <div className="mb-4">
-            <label className="block text-xs font-semibold text-slate-600 mb-1.5">Data de vencimento</label>
-            <input type="date" value={vencimento} onChange={e => setVencimento(e.target.value)}
-              className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
-            />
-          </div>
+            {/* Vencimento (só quando fiado) */}
+            {tipoPgto === 'prazo' && (
+              <div className="mb-4">
+                <label className="block text-xs font-semibold text-slate-600 mb-1.5">Data de vencimento</label>
+                <input type="date" value={vencimento} onChange={e => setVencimento(e.target.value)}
+                  className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+            )}
+
+            <p className="text-xs text-slate-400 mb-4 flex items-center gap-1">
+              <DollarSign size={11} />
+              {tipoPgto === 'vista'
+                ? 'Lançado no financeiro como receita imediatamente.'
+                : 'Registrado como fiado. Entra no financeiro ao receber.'}
+            </p>
+          </>
         )}
-
-        <p className="text-xs text-slate-400 mb-4 flex items-center gap-1">
-          <DollarSign size={11} />
-          {tipoPgto === 'vista'
-            ? 'Lançado no financeiro como receita imediatamente.'
-            : 'Registrado como fiado. Entra no financeiro ao receber.'}
-        </p>
 
         {/* Observações do atendimento */}
         <div className="mb-5">
@@ -129,14 +150,90 @@ function ModalConcluir({ agendamento, onConfirmar, onCancelar }) {
   )
 }
 
+// ── Modal de exclusão com senha ───────────────────────────
+function ModalExcluir({ agendamento, onConfirmar, onCancelar }) {
+  const [senha, setSenha]           = useState('')
+  const [mostrar, setMostrar]       = useState(false)
+  const [erro, setErro]             = useState('')
+  const [verificando, setVerificando] = useState(false)
+
+  async function confirmar(e) {
+    e.preventDefault()
+    if (!senha) return
+    setVerificando(true)
+    setErro('')
+    try {
+      const res = await window.api.auth.verificarSenha(senha)
+      if (res.ok) {
+        onConfirmar()
+      } else {
+        setErro('Senha incorreta.')
+        setSenha('')
+      }
+    } finally {
+      setVerificando(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6">
+        <div className="w-12 h-12 bg-red-50 rounded-2xl flex items-center justify-center mb-4 mx-auto">
+          <Trash2 size={22} className="text-red-500" />
+        </div>
+        <h3 className="text-base font-bold text-slate-800 text-center mb-1">Excluir agendamento?</h3>
+        <p className="text-sm text-slate-400 text-center mb-1">
+          <strong>{agendamento.servico}</strong> — {agendamento.nome_pet}
+        </p>
+        <p className="text-xs text-red-500 text-center mb-5 bg-red-50 rounded-xl px-3 py-2">
+          O valor de <strong>R$ {Number(agendamento.valor || 0).toFixed(2).replace('.', ',')}</strong> será removido da receita.
+        </p>
+        <form onSubmit={confirmar} className="space-y-3">
+          <div className="relative">
+            <Lock size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              type={mostrar ? 'text' : 'password'}
+              placeholder="Digite a senha para confirmar"
+              value={senha}
+              onChange={e => { setSenha(e.target.value); setErro('') }}
+              autoFocus
+              className={`w-full pl-9 pr-10 py-2.5 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-red-400 ${erro ? 'border-red-300 bg-red-50' : 'border-slate-200'}`}
+            />
+            <button type="button" onClick={() => setMostrar(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400">
+              {mostrar ? <EyeOff size={14} /> : <Eye size={14} />}
+            </button>
+          </div>
+          {erro && <p className="text-xs text-red-500">{erro}</p>}
+          <div className="flex gap-3 pt-1">
+            <button type="button" onClick={onCancelar} className="flex-1 py-2.5 bg-slate-100 text-slate-700 rounded-xl text-sm font-medium hover:bg-slate-200 transition-colors">
+              Cancelar
+            </button>
+            <button type="submit" disabled={verificando || !senha} className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-red-500 text-white rounded-xl text-sm font-medium hover:bg-red-600 disabled:opacity-50 transition-colors">
+              {verificando ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+              {verificando ? 'Verificando...' : 'Excluir'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 // ── AgendaItem ────────────────────────────────────────────
 function AgendaItem({ agendamento: ag, onEditar, onAtualizar }) {
   const [processando, setProcessando]       = useState(false)
   const [modalConcluir, setModalConcluir]   = useState(false)
+  const [modalExcluir, setModalExcluir]     = useState(false)
 
   const servicoConfig = SERVICO_CONFIG[ag.servico] || SERVICO_CONFIG.default
   const statusConfig  = STATUS_CONFIG[ag.status]   || STATUS_CONFIG.agendado
   const especieEmoji  = ESPECIE_EMOJI[ag.especie]  || ESPECIE_EMOJI.default
+
+  // Detecta se veio de plano de assinatura (observacoes começa com [Plano:...])
+  const ehDePlano = ag.observacoes && ag.observacoes.startsWith('[Plano:')
+  const nomePlano = ehDePlano
+    ? ag.observacoes.match(/\[Plano:(?:\d+:)?\s*([^·\]]+)/)?.[1]?.trim() || 'Plano'
+    : null
 
   // ── Ações de status ────────────────────────────────────
 
@@ -161,6 +258,15 @@ function AgendaItem({ agendamento: ag, onEditar, onAtualizar }) {
     setProcessando(true)
     try {
       await window.api.agendamentos.atualizarStatus(ag.id, 'agendado')
+      onAtualizar()
+    } finally { setProcessando(false) }
+  }
+
+  async function excluir() {
+    setProcessando(true)
+    try {
+      await window.api.agendamentos.excluir(ag.id)
+      setModalExcluir(false)
       onAtualizar()
     } finally { setProcessando(false) }
   }
@@ -212,6 +318,7 @@ function AgendaItem({ agendamento: ag, onEditar, onAtualizar }) {
 
   const isConcluido  = ag.status === 'concluido'
   const isCancelado  = ag.status === 'cancelado'
+  const isExcluido   = ag.status === 'excluido'
   const isAgendado   = ag.status === 'agendado'
   const isConfirmado = ag.status === 'confirmado'
   const isPendente   = isAgendado || isConfirmado
@@ -228,7 +335,8 @@ function AgendaItem({ agendamento: ag, onEditar, onAtualizar }) {
         transition-all duration-200 hover:shadow-md
         ${isConcluido ? 'border-emerald-100 opacity-80' : ''}
         ${isCancelado ? 'border-slate-100 opacity-60'  : ''}
-        ${!isConcluido && !isCancelado ? 'border-slate-100' : ''}
+        ${isExcluido  ? 'border-slate-100 opacity-40'  : ''}
+        ${!isConcluido && !isCancelado && !isExcluido ? 'border-slate-100' : ''}
       `}>
         <div className="flex items-stretch">
 
@@ -282,8 +390,15 @@ function AgendaItem({ agendamento: ag, onEditar, onAtualizar }) {
                   )}
                 </div>
 
-                {/* Observações */}
-                {ag.observacoes && (
+                {/* Badge de plano de assinatura */}
+                {ehDePlano && (
+                  <span className="inline-flex items-center gap-1 mt-1 px-2 py-0.5 bg-purple-50 border border-purple-200 text-purple-700 text-[10px] font-semibold rounded-full">
+                    📋 Plano: {nomePlano}
+                  </span>
+                )}
+
+                {/* Observações (não duplica o texto do plano) */}
+                {ag.observacoes && !ehDePlano && (
                   <p className="text-xs text-slate-400 mt-1 italic truncate">
                     "{ag.observacoes}"
                   </p>
@@ -382,6 +497,20 @@ function AgendaItem({ agendamento: ag, onEditar, onAtualizar }) {
               </div>
             )}
 
+            {/* Excluir (se concluído) */}
+            {isConcluido && (
+              <div className="flex items-center gap-2 mt-3 pt-3 border-t border-slate-50">
+                <button
+                  onClick={() => setModalExcluir(true)}
+                  disabled={processando}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-red-50 text-red-500 border border-red-100 rounded-lg text-xs font-medium hover:bg-red-100 transition-colors disabled:opacity-50 ml-auto"
+                >
+                  <Trash2 size={11} />
+                  Excluir
+                </button>
+              </div>
+            )}
+
             {/* Reagendar (se cancelado) */}
             {isCancelado && (
               <div className="flex items-center gap-2 mt-3 pt-3 border-t border-slate-50">
@@ -412,6 +541,15 @@ function AgendaItem({ agendamento: ag, onEditar, onAtualizar }) {
           agendamento={ag}
           onConfirmar={concluir}
           onCancelar={() => setModalConcluir(false)}
+        />
+      )}
+
+      {/* Modal de exclusão */}
+      {modalExcluir && (
+        <ModalExcluir
+          agendamento={ag}
+          onConfirmar={excluir}
+          onCancelar={() => setModalExcluir(false)}
         />
       )}
     </>

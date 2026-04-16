@@ -486,11 +486,20 @@ function criarTabelas() {
 // Migração segura: adiciona colunas novas em tabelas existentes
 function migrarTabelas() {
   const novasColunas = [
-    ['vendas',        'tipo_pagamento TEXT DEFAULT "vista"'],
-    ['vendas',        'id_conta_receber INTEGER'],
-    ['vendas',        'nome_cliente TEXT'],
-    ['agendamentos',  'tipo_pagamento TEXT DEFAULT "vista"'],
-    ['agendamentos',  'id_conta_receber INTEGER'],
+    ['vendas',             'tipo_pagamento TEXT DEFAULT "vista"'],
+    ['vendas',             'id_conta_receber INTEGER'],
+    ['vendas',             'nome_cliente TEXT'],
+    ['agendamentos',       'tipo_pagamento TEXT DEFAULT "vista"'],
+    ['agendamentos',       'id_conta_receber INTEGER'],
+    ['plano_tipos',        'modo_pagamento TEXT DEFAULT "pre_pago"'],
+    ['plano_assinaturas',  'dia_cobranca INTEGER'],
+    ['plano_assinaturas',  'data_renovacao TEXT'],
+    ['plano_usos',         'id_pet INTEGER'],
+    // Granel / Ração a granel
+    ['estoque',            'tipo TEXT DEFAULT "pacote"'],
+    ['estoque',            'peso_por_pacote REAL'],
+    ['estoque',            'preco_por_kg REAL'],
+    ['estoque',            'id_pacote_vinculado INTEGER'],
   ]
   for (const [tabela, coluna] of novasColunas) {
     try { db.exec(`ALTER TABLE ${tabela} ADD COLUMN ${coluna}`) } catch (_) {}
@@ -726,6 +735,15 @@ const agendamentos = {
     return db.prepare('DELETE FROM agendamentos WHERE id = ?').run(id)
   },
 
+  // Marca como excluído e remove a receita gerada
+  excluir(id) {
+    return db.transaction(() => {
+      db.prepare("UPDATE agendamentos SET status = 'excluido' WHERE id = ?").run(id)
+      db.prepare("DELETE FROM financeiro WHERE id_agendamento = ?").run(id)
+      return agendamentos.buscarPorId(id)
+    })()
+  },
+
   total() {
     return db.prepare("SELECT COUNT(*) as total FROM agendamentos WHERE status = 'agendado'").get()
   }
@@ -906,10 +924,16 @@ const pesoHistorico = {
 const estoque = {
   criar(dados) {
     const stmt = db.prepare(`
-      INSERT INTO estoque (nome, categoria, quantidade, unidade, quantidade_min, preco_custo, preco_venda, observacoes)
-      VALUES (@nome, @categoria, @quantidade, @unidade, @quantidade_min, @preco_custo, @preco_venda, @observacoes)
+      INSERT INTO estoque (nome, categoria, quantidade, unidade, quantidade_min, preco_custo, preco_venda, observacoes, tipo, peso_por_pacote, preco_por_kg, id_pacote_vinculado)
+      VALUES (@nome, @categoria, @quantidade, @unidade, @quantidade_min, @preco_custo, @preco_venda, @observacoes, @tipo, @peso_por_pacote, @preco_por_kg, @id_pacote_vinculado)
     `)
-    const result = stmt.run(dados)
+    const result = stmt.run({
+      ...dados,
+      tipo:                 dados.tipo || 'pacote',
+      peso_por_pacote:      dados.peso_por_pacote || null,
+      preco_por_kg:         dados.preco_por_kg || null,
+      id_pacote_vinculado:  dados.id_pacote_vinculado || null,
+    })
     return { id: result.lastInsertRowid, ...dados }
   },
 
@@ -964,16 +988,68 @@ const estoque = {
       SET nome = @nome, categoria = @categoria, unidade = @unidade,
           quantidade_min = @quantidade_min, preco_custo = @preco_custo,
           preco_venda = @preco_venda, observacoes = @observacoes,
+          tipo = @tipo, peso_por_pacote = @peso_por_pacote,
+          preco_por_kg = @preco_por_kg, id_pacote_vinculado = @id_pacote_vinculado,
           atualizado_em = CURRENT_TIMESTAMP
       WHERE id = @id
     `)
-    stmt.run({ ...dados, id })
+    stmt.run({
+      ...dados,
+      id,
+      tipo:                dados.tipo || 'pacote',
+      peso_por_pacote:     dados.peso_por_pacote || null,
+      preco_por_kg:        dados.preco_por_kg || null,
+      id_pacote_vinculado: dados.id_pacote_vinculado || null,
+    })
     return estoque.buscarPorId(id)
   },
 
   deletar(id) {
     return db.prepare('DELETE FROM estoque WHERE id = ?').run(id)
-  }
+  },
+
+  // Lista apenas produtos do tipo 'pacote' (para vincular ao granel)
+  listarPacotes() {
+    return db.prepare(`
+      SELECT id, nome, quantidade, unidade, peso_por_pacote
+      FROM estoque
+      WHERE tipo = 'pacote' OR tipo IS NULL
+      ORDER BY nome COLLATE NOCASE
+    `).all()
+  },
+
+  // Puxa N pacotes manualmente para o estoque granel
+  puxarPacotesManual(id_granel, n_pacotes) {
+    return db.transaction(() => {
+      const granel = db.prepare('SELECT * FROM estoque WHERE id = ?').get(id_granel)
+      if (!granel || !granel.id_pacote_vinculado)
+        throw new Error('Produto granel inválido ou sem pacote vinculado.')
+      if (!granel.peso_por_pacote || granel.peso_por_pacote <= 0)
+        throw new Error('Peso por pacote não configurado.')
+      const pacote = db.prepare('SELECT * FROM estoque WHERE id = ?').get(granel.id_pacote_vinculado)
+      if (!pacote)
+        throw new Error('Pacote vinculado não encontrado.')
+      if (pacote.quantidade < n_pacotes)
+        throw new Error(`Estoque insuficiente: apenas ${pacote.quantidade} pacote(s) disponível(eis).`)
+
+      const kgAdicionado = n_pacotes * granel.peso_por_pacote
+
+      db.prepare('UPDATE estoque SET quantidade = quantidade - ?, atualizado_em = CURRENT_TIMESTAMP WHERE id = ?')
+        .run(n_pacotes, pacote.id)
+      db.prepare('UPDATE estoque SET quantidade = quantidade + ?, atualizado_em = CURRENT_TIMESTAMP WHERE id = ?')
+        .run(kgAdicionado, id_granel)
+      db.prepare("INSERT INTO movimentacoes_estoque (id_produto, tipo, quantidade, motivo) VALUES (?, 'saida', ?, ?)")
+        .run(pacote.id, n_pacotes, `Abertura para granel: ${granel.nome}`)
+      db.prepare("INSERT INTO movimentacoes_estoque (id_produto, tipo, quantidade, motivo) VALUES (?, 'entrada', ?, ?)")
+        .run(id_granel, kgAdicionado, `${n_pacotes} pacote(s) de "${pacote.nome}" aberto(s)`)
+
+      return {
+        granel: estoque.buscarPorId(id_granel),
+        pacote: estoque.buscarPorId(pacote.id),
+        kg_adicionado: kgAdicionado,
+      }
+    })()
+  },
 }
 
 // ──────────────────────────────────────────────────────────
@@ -1608,6 +1684,45 @@ const vendas = {
           VALUES (?, ?, ?, ?, ?, ?)
         `).run(id_venda, item.id_produto, item.nome_produto, item.quantidade, item.preco_unit, item.subtotal)
 
+        // Se for produto granel, puxa pacotes automaticamente se necessário
+        const prodGranel = db.prepare('SELECT * FROM estoque WHERE id = ?').get(item.id_produto)
+        if (prodGranel && prodGranel.tipo === 'granel') {
+          const kgDisponivel = Number(prodGranel.quantidade) || 0
+          const kgNecessario = Number(item.quantidade)
+          if (kgDisponivel < kgNecessario) {
+            // Tenta puxar pacotes automaticamente
+            if (prodGranel.id_pacote_vinculado && prodGranel.peso_por_pacote > 0) {
+              const kgFaltando = kgNecessario - kgDisponivel
+              const pacotesNecessarios = Math.ceil(kgFaltando / prodGranel.peso_por_pacote)
+              const pacote = db.prepare('SELECT * FROM estoque WHERE id = ?').get(prodGranel.id_pacote_vinculado)
+              if (!pacote || pacote.quantidade < pacotesNecessarios) {
+                const dispPacotes = pacote ? pacote.quantidade : 0
+                const kgMaxPossivel = kgDisponivel + (dispPacotes * prodGranel.peso_por_pacote)
+                throw new Error(
+                  `Estoque insuficiente para "${prodGranel.nome}". ` +
+                  `Disponível: ${kgDisponivel.toFixed(2)} kg + ${dispPacotes} pacote(s) = ${kgMaxPossivel.toFixed(2)} kg. ` +
+                  `Necessário: ${kgNecessario.toFixed(3)} kg.`
+                )
+              }
+              const kgAdicionado = pacotesNecessarios * prodGranel.peso_por_pacote
+              db.prepare('UPDATE estoque SET quantidade = quantidade - ?, atualizado_em = CURRENT_TIMESTAMP WHERE id = ?')
+                .run(pacotesNecessarios, pacote.id)
+              db.prepare('UPDATE estoque SET quantidade = quantidade + ?, atualizado_em = CURRENT_TIMESTAMP WHERE id = ?')
+                .run(kgAdicionado, prodGranel.id)
+              db.prepare("INSERT INTO movimentacoes_estoque (id_produto, tipo, quantidade, motivo) VALUES (?, 'saida', ?, ?)")
+                .run(pacote.id, pacotesNecessarios, `Auto-abertura para venda #${id_venda}`)
+              db.prepare("INSERT INTO movimentacoes_estoque (id_produto, tipo, quantidade, motivo) VALUES (?, 'entrada', ?, ?)")
+                .run(prodGranel.id, kgAdicionado, `${pacotesNecessarios} pacote(s) aberto(s) para venda #${id_venda}`)
+            } else {
+              throw new Error(
+                `Estoque insuficiente para "${prodGranel.nome}". ` +
+                `Disponível: ${kgDisponivel.toFixed(2)} kg. Necessário: ${kgNecessario.toFixed(3)} kg. ` +
+                `Nenhum pacote vinculado para reabastecimento automático.`
+              )
+            }
+          }
+        }
+
         db.prepare(`UPDATE estoque SET quantidade = quantidade - ? WHERE id = ?`).run(item.quantidade, item.id_produto)
 
         db.prepare(`
@@ -1664,6 +1779,23 @@ const vendas = {
     `).all()
   },
 
+  listarCanceladas() {
+    const vendas = db.prepare(`
+      SELECT v.*,
+             p.nome AS nome_pet,
+             d.nome AS nome_dono
+      FROM vendas v
+      LEFT JOIN pets  p ON v.id_pet  = p.id
+      LEFT JOIN donos d ON v.id_dono = d.id
+      WHERE v.status != 'concluida'
+      ORDER BY v.criado_em DESC
+    `).all()
+    for (const v of vendas) {
+      v.itens = db.prepare(`SELECT * FROM itens_venda WHERE id_venda = ?`).all(v.id)
+    }
+    return vendas
+  },
+
   buscarPorId(id) {
     const venda = db.prepare(`
       SELECT v.*,
@@ -1679,22 +1811,24 @@ const vendas = {
     return venda
   },
 
-  // Cancela ou reverte: restaura estoque e remove do financeiro
-  cancelar(id, motivo = 'cancelada') {
-    return db.transaction(function(id, motivo) {
+  // Cancela ou reverte: restaura estoque (se voltaEstoque=true) e remove do financeiro
+  cancelar(id, motivo = 'cancelada', voltaEstoque = true) {
+    return db.transaction(function(id, motivo, voltaEstoque) {
       // Busca venda e itens diretamente (evita aninhamento de transação)
       const venda = db.prepare(`SELECT * FROM vendas WHERE id = ?`).get(id)
       if (!venda) throw new Error('Venda não encontrada')
       if (venda.status !== 'concluida') throw new Error('Venda já foi cancelada ou devolvida')
       const itens = db.prepare(`SELECT * FROM itens_venda WHERE id_venda = ?`).all(id)
 
-      // Restaurar estoque
-      for (const item of itens) {
-        db.prepare(`UPDATE estoque SET quantidade = quantidade + ? WHERE id = ?`).run(item.quantidade, item.id_produto)
-        db.prepare(`
-          INSERT INTO movimentacoes_estoque (id_produto, tipo, quantidade, motivo)
-          VALUES (?, 'entrada', ?, ?)
-        `).run(item.id_produto, item.quantidade, `${motivo === 'devolvida' ? 'Devolução' : 'Cancelamento'} Venda #${id}`)
+      // Restaurar estoque apenas se voltaEstoque for verdadeiro (avaria não restaura)
+      if (voltaEstoque) {
+        for (const item of itens) {
+          db.prepare(`UPDATE estoque SET quantidade = quantidade + ? WHERE id = ?`).run(item.quantidade, item.id_produto)
+          db.prepare(`
+            INSERT INTO movimentacoes_estoque (id_produto, tipo, quantidade, motivo)
+            VALUES (?, 'entrada', ?, ?)
+          `).run(item.id_produto, item.quantidade, `${motivo === 'devolvida' ? 'Devolução' : 'Cancelamento'} Venda #${id}`)
+        }
       }
 
       // Remover do financeiro
@@ -1705,7 +1839,7 @@ const vendas = {
       // Atualizar status da venda
       db.prepare(`UPDATE vendas SET status = ?, id_financeiro = NULL WHERE id = ?`).run(motivo, id)
       return { ok: true }
-    })(id, motivo)
+    })(id, motivo, voltaEstoque)
   },
 
   totalMes() {
@@ -1840,6 +1974,20 @@ const contasReceber = {
   deletar(id) {
     return db.prepare('DELETE FROM contas_receber WHERE id = ?').run(id)
   },
+
+  alertasVencimento() {
+    const hoje = new Date().toISOString().slice(0, 10)
+    const em3dias = new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10)
+    return db.prepare(`
+      SELECT cr.*, d.nome AS nome_cliente
+      FROM contas_receber cr
+      LEFT JOIN donos d ON cr.id_dono = d.id
+      WHERE cr.status IN ('pendente','atrasado')
+        AND cr.data_vencimento IS NOT NULL
+        AND cr.data_vencimento <= ?
+      ORDER BY cr.data_vencimento ASC
+    `).all(em3dias)
+  },
 }
 
 // ──────────────────────────────────────────────────────────
@@ -1853,8 +2001,8 @@ const planos = {
   criarTipo(dados) {
     return db.transaction(function(d) {
       const res = db.prepare(`
-        INSERT INTO plano_tipos (nome, descricao, valor) VALUES (@nome, @descricao, @valor)
-      `).run(d)
+        INSERT INTO plano_tipos (nome, descricao, valor, modo_pagamento) VALUES (@nome, @descricao, @valor, @modo_pagamento)
+      `).run({ modo_pagamento: 'pre_pago', ...d })
       const id = res.lastInsertRowid
       for (const item of (d.itens || [])) {
         db.prepare(`INSERT INTO plano_tipo_itens (id_plano_tipo, servico, quantidade) VALUES (?, ?, ?)`)
@@ -1880,8 +2028,8 @@ const planos = {
 
   editarTipo(id, dados) {
     return db.transaction(function(d) {
-      db.prepare(`UPDATE plano_tipos SET nome = @nome, descricao = @descricao, valor = @valor, ativo = @ativo WHERE id = @id`)
-        .run({ ...d, id })
+      db.prepare(`UPDATE plano_tipos SET nome = @nome, descricao = @descricao, valor = @valor, ativo = @ativo, modo_pagamento = @modo_pagamento WHERE id = @id`)
+        .run({ modo_pagamento: 'pre_pago', ...d, id })
       db.prepare('DELETE FROM plano_tipo_itens WHERE id_plano_tipo = ?').run(id)
       for (const item of (d.itens || [])) {
         db.prepare('INSERT INTO plano_tipo_itens (id_plano_tipo, servico, quantidade) VALUES (?, ?, ?)')
@@ -1899,20 +2047,41 @@ const planos = {
 
   criarAssinatura(dados) {
     return db.transaction(function(d) {
+      const hoje = new Date().toISOString().split('T')[0]
+      const dataVenc = d.data_vencimento || hoje
+      // Competencia é sempre o mês atual (quando o plano entrou em vigor)
+      // data_vencimento é só o prazo de pagamento, pode ser em qualquer mês
+      const [hojAno, hojMes] = hoje.split('-')
+      const competencia = `${hojAno}-${hojMes}`
+      const diaVenc = parseInt(dataVenc.split('-')[2]) || 1
+
       const res = db.prepare(`
         INSERT INTO plano_assinaturas (id_dono, id_pet, id_plano_tipo, data_inicio, dia_vencimento, observacoes)
         VALUES (@id_dono, @id_pet, @id_plano_tipo, @data_inicio, @dia_vencimento, @observacoes)
-      `).run(d)
+      `).run({
+        id_dono: d.id_dono,
+        id_pet: d.id_pet || null,
+        id_plano_tipo: d.id_plano_tipo,
+        data_inicio: hoje,
+        dia_vencimento: diaVenc,
+        observacoes: d.observacoes || null,
+      })
       const id = res.lastInsertRowid
       const tipo = planos.buscarTipoPorId(d.id_plano_tipo)
-      const hoje = new Date()
-      const ano = hoje.getFullYear()
-      const mes = hoje.getMonth() + 1
-      const competencia = `${ano}-${String(mes).padStart(2, '0')}`
-      const diaVenc = Math.min(d.dia_vencimento, new Date(ano, mes, 0).getDate())
-      const dataVenc = `${ano}-${String(mes).padStart(2, '0')}-${String(diaVenc).padStart(2, '0')}`
-      db.prepare(`INSERT INTO plano_ciclos (id_assinatura, competencia, data_vencimento, valor, status) VALUES (?, ?, ?, ?, 'pendente')`)
-        .run(id, competencia, dataVenc, tipo.valor)
+
+      const statusCiclo = d.pago ? 'pago' : 'pendente'
+      const dataPagamento = d.pago ? (d.data_pagamento || hoje) : null
+      let id_financeiro = null
+
+      if (d.pago) {
+        const resF = db.prepare(`INSERT INTO financeiro (descricao, valor, tipo, data) VALUES (?, ?, 'receita', ?)`)
+          .run(`Plano: ${tipo.nome}`, tipo.valor, dataPagamento)
+        id_financeiro = resF.lastInsertRowid
+      }
+
+      db.prepare(`INSERT INTO plano_ciclos (id_assinatura, competencia, data_vencimento, data_pagamento, valor, status, id_financeiro) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, competencia, dataVenc, dataPagamento, tipo.valor, statusCiclo, id_financeiro)
+
       return planos.buscarAssinaturaPorId(id)
     })(dados)
   },
@@ -1967,22 +2136,30 @@ const planos = {
   cicloAtual(id_assinatura) {
     const hoje = new Date()
     const competencia = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}`
-    return db.prepare('SELECT * FROM plano_ciclos WHERE id_assinatura = ? AND competencia = ?')
+    // Tenta primeiro o ciclo do mês atual
+    const ciclo = db.prepare('SELECT * FROM plano_ciclos WHERE id_assinatura = ? AND competencia = ?')
       .get(id_assinatura, competencia)
+    if (ciclo) return ciclo
+    // Fallback: ciclo mais recente que ainda não foi encerrado
+    return db.prepare(`
+      SELECT * FROM plano_ciclos
+      WHERE id_assinatura = ? AND status IN ('pendente', 'pago')
+      ORDER BY competencia DESC LIMIT 1
+    `).get(id_assinatura)
   },
 
-  confirmarPagamento(id_ciclo) {
+  confirmarPagamento(id_ciclo, data_pagamento) {
     return db.transaction(function() {
       const ciclo = db.prepare('SELECT * FROM plano_ciclos WHERE id = ?').get(id_ciclo)
       const assin = db.prepare('SELECT * FROM plano_assinaturas WHERE id = ?').get(ciclo.id_assinatura)
-      const tipo = planos.buscarTipoPorId(assin.id_plano_tipo)
-      const hoje = new Date().toISOString().split('T')[0]
+      const tipo  = planos.buscarTipoPorId(assin.id_plano_tipo)
+      const dtPago = data_pagamento || new Date().toISOString().split('T')[0]
 
       const resF = db.prepare(`INSERT INTO financeiro (descricao, valor, tipo, data) VALUES (?, ?, 'receita', ?)`)
-        .run(`Plano: ${tipo.nome}`, ciclo.valor, hoje)
+        .run(`Plano: ${tipo.nome}`, ciclo.valor, dtPago)
 
       db.prepare(`UPDATE plano_ciclos SET status = 'pago', data_pagamento = ?, id_financeiro = ? WHERE id = ?`)
-        .run(hoje, resF.lastInsertRowid, id_ciclo)
+        .run(dtPago, resF.lastInsertRowid, id_ciclo)
 
       // Gera próximo ciclo
       const [ano, mes] = ciclo.competencia.split('-').map(Number)
@@ -1992,7 +2169,9 @@ const planos = {
       const jaExiste = db.prepare('SELECT id FROM plano_ciclos WHERE id_assinatura = ? AND competencia = ?')
         .get(ciclo.id_assinatura, proxComp)
       if (!jaExiste && assin.status === 'ativo') {
-        const diaVenc = Math.min(assin.dia_vencimento, new Date(pAno, pMes, 0).getDate())
+        let diaVenc = assin.dia_vencimento || 1
+        if (assin.data_renovacao) diaVenc = parseInt(assin.data_renovacao.split('-')[2])
+        diaVenc = Math.min(diaVenc, new Date(pAno, pMes, 0).getDate())
         const dataVenc = `${pAno}-${String(pMes).padStart(2, '0')}-${String(diaVenc).padStart(2, '0')}`
         db.prepare(`INSERT INTO plano_ciclos (id_assinatura, competencia, data_vencimento, valor, status) VALUES (?, ?, ?, ?, 'pendente')`)
           .run(ciclo.id_assinatura, proxComp, dataVenc, tipo.valor)
@@ -2005,15 +2184,19 @@ const planos = {
 
   registrarUso(dados) {
     const res = db.prepare(`
-      INSERT INTO plano_usos (id_ciclo, servico, id_agendamento, data_uso, observacoes)
-      VALUES (@id_ciclo, @servico, @id_agendamento, @data_uso, @observacoes)
-    `).run(dados)
+      INSERT INTO plano_usos (id_ciclo, servico, id_agendamento, id_pet, data_uso, observacoes)
+      VALUES (@id_ciclo, @servico, @id_agendamento, @id_pet, @data_uso, @observacoes)
+    `).run({ ...dados, id_pet: dados.id_pet || null })
     return { id: res.lastInsertRowid }
   },
 
   listarUsosPorCiclo(id_ciclo) {
     return db.prepare(`
-      SELECT u.* FROM plano_usos u WHERE u.id_ciclo = ? ORDER BY u.data_uso DESC
+      SELECT u.*, p.nome AS nome_pet
+      FROM plano_usos u
+      LEFT JOIN pets p ON u.id_pet = p.id
+      WHERE u.id_ciclo = ?
+      ORDER BY u.data_uso DESC
     `).all(id_ciclo)
   },
 
@@ -2021,11 +2204,76 @@ const planos = {
     return db.prepare('DELETE FROM plano_usos WHERE id = ?').run(id)
   },
 
+  // Todos os usos de uma assinatura (todos os ciclos) — para relatório
+  listarUsosPorAssinatura(id_assinatura) {
+    return db.prepare(`
+      SELECT u.*, c.competencia, c.data_vencimento as ciclo_vencimento,
+             p.nome as nome_pet
+      FROM plano_usos u
+      JOIN plano_ciclos c ON u.id_ciclo = c.id
+      LEFT JOIN pets p ON u.id_pet = p.id
+      WHERE c.id_assinatura = ?
+      ORDER BY u.data_uso DESC
+    `).all(id_assinatura)
+  },
+
+  renovarCiclo(id_assinatura) {
+    const assin = db.prepare('SELECT * FROM plano_assinaturas WHERE id = ?').get(id_assinatura)
+    const tipo  = planos.buscarTipoPorId(assin.id_plano_tipo)
+    const hoje  = new Date()
+    const ano   = hoje.getFullYear()
+    const mes   = String(hoje.getMonth() + 1).padStart(2, '0')
+    const comp  = `${ano}-${mes}`
+    let diaVenc = assin.dia_vencimento || 1
+    if (assin.data_renovacao) diaVenc = parseInt(assin.data_renovacao.split('-')[2])
+    diaVenc = Math.min(diaVenc, new Date(hoje.getFullYear(), hoje.getMonth() + 1, 0).getDate())
+    const dataVenc = `${ano}-${mes}-${String(diaVenc).padStart(2, '0')}`
+    const jaExiste = db.prepare('SELECT id FROM plano_ciclos WHERE id_assinatura = ? AND competencia = ?')
+      .get(id_assinatura, comp)
+    if (jaExiste) return jaExiste
+    const res = db.prepare(`INSERT INTO plano_ciclos (id_assinatura, competencia, data_vencimento, valor, status) VALUES (?, ?, ?, ?, 'pendente')`)
+      .run(id_assinatura, comp, dataVenc, tipo.valor)
+    return { id: res.lastInsertRowid }
+  },
+
   // ── Resumo ciclo atual ────────────────────────────────
 
+  // Garante que existe um ciclo para o mês atual — cria se não existir
+  garantirCicloAtual(id_assinatura) {
+    const hoje = new Date()
+    const ano  = hoje.getFullYear()
+    const mes  = String(hoje.getMonth() + 1).padStart(2, '0')
+    const comp = `${ano}-${mes}`
+
+    const jaExiste = db.prepare('SELECT * FROM plano_ciclos WHERE id_assinatura = ? AND competencia = ?')
+      .get(id_assinatura, comp)
+    if (jaExiste) return jaExiste
+
+    const assin = db.prepare('SELECT * FROM plano_assinaturas WHERE id = ?').get(id_assinatura)
+    if (!assin || assin.status !== 'ativo') return null
+    const tipo = planos.buscarTipoPorId(assin.id_plano_tipo)
+    if (!tipo) return null
+
+    // Usa o dia de vencimento gravado, fallback para o último dia do mês
+    let diaVenc = assin.dia_vencimento || hoje.getDate()
+    diaVenc = Math.min(diaVenc, new Date(ano, hoje.getMonth() + 1, 0).getDate())
+    const dataVenc = `${ano}-${mes}-${String(diaVenc).padStart(2, '0')}`
+
+    const res = db.prepare(`
+      INSERT INTO plano_ciclos (id_assinatura, competencia, data_vencimento, valor, status)
+      VALUES (?, ?, ?, ?, 'pendente')
+    `).run(id_assinatura, comp, dataVenc, tipo.valor)
+
+    return db.prepare('SELECT * FROM plano_ciclos WHERE id = ?').get(res.lastInsertRowid)
+  },
+
   resumoCicloAtual(id_assinatura) {
-    const ciclo = planos.cicloAtual(id_assinatura)
+    // Garante que existe ciclo para o mês atual (auto-cria se necessário)
+    planos.garantirCicloAtual(id_assinatura)
+
+    let ciclo = planos.cicloAtual(id_assinatura)
     if (!ciclo) return null
+
     const assin = db.prepare('SELECT * FROM plano_assinaturas WHERE id = ?').get(id_assinatura)
     const tipo = planos.buscarTipoPorId(assin.id_plano_tipo)
     const usos = planos.listarUsosPorCiclo(ciclo.id)
@@ -2047,6 +2295,44 @@ const planos = {
       JOIN plano_tipos t ON a.id_plano_tipo = t.id
       WHERE a.id_dono = ? AND a.status = 'ativo'
     `).all(id_dono)
+    for (const r of rows) {
+      r.tipo = planos.buscarTipoPorId(r.id_plano_tipo)
+      r.resumo_ciclo = planos.resumoCicloAtual(r.id)
+    }
+    return rows
+  },
+
+  // Agendar sessões do plano: cria agendamento + uso juntos (usado no agendamento em lote e no AgendaFormulario)
+  agendarSessoesDePlano(id_assinatura, sessoes) {
+    const stmtAg = db.prepare(`
+      INSERT INTO agendamentos (id_pet, servico, data, hora, status, valor, observacoes)
+      VALUES (?, ?, ?, ?, 'agendado', null, ?)
+    `)
+    const stmtUso = db.prepare(`
+      INSERT INTO plano_usos (id_ciclo, id_pet, servico, data_uso, observacoes, id_agendamento)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `)
+    const resultados = []
+    for (const s of sessoes) {
+      const obs = `[Plano:${id_assinatura}: ${s.nome_plano} · ${s.nome_dono}]${s.observacoes ? ' ' + s.observacoes : ''}`
+      const ag  = stmtAg.run(s.id_pet, s.servico, s.data, s.hora, obs)
+      const uso = stmtUso.run(s.id_ciclo, s.id_pet, s.servico, s.data, s.observacoes || null, ag.lastInsertRowid)
+      resultados.push({ id_agendamento: ag.lastInsertRowid, id_uso: uso.lastInsertRowid })
+    }
+    return resultados
+  },
+
+  // Assinaturas ativas de um pet (pelo seu dono) — filtra por pet específico ou sem pet definido
+  assinaturasAtivasPorPet(id_pet) {
+    const pet = db.prepare('SELECT id_dono FROM pets WHERE id = ?').get(id_pet)
+    if (!pet) return []
+    const rows = db.prepare(`
+      SELECT a.*, t.nome as nome_plano, d.nome as nome_dono
+      FROM plano_assinaturas a
+      JOIN plano_tipos t ON a.id_plano_tipo = t.id
+      JOIN donos d ON a.id_dono = d.id
+      WHERE a.id_dono = ? AND a.status = 'ativo' AND (a.id_pet IS NULL OR a.id_pet = ?)
+    `).all(pet.id_dono, id_pet)
     for (const r of rows) {
       r.tipo = planos.buscarTipoPorId(r.id_plano_tipo)
       r.resumo_ciclo = planos.resumoCicloAtual(r.id)
@@ -2157,4 +2443,80 @@ const entregas = {
   },
 }
 
-module.exports = { connect, fechar, getDbPath, donos, pets, agendamentos, vacinas, financeiro, pesoHistorico, estoque, veterinarios, consultas, internacoes, cirurgias, prescricoes, configuracoes, exames, vendas, contasReceber, planos, entregas }
+// ──────────────────────────────────────────────────────────
+// CLÍNICA — Panorama (histórico unificado por pet)
+// ──────────────────────────────────────────────────────────
+
+const clinica = {
+  faturar({ id_dono, descricao, itens, total, tipo_pagamento, data_vencimento }) {
+    const hoje = new Date().toISOString().slice(0, 10)
+    const desc = descricao || `Atendimento clínico — ${itens?.length ?? 0} serviço(s)`
+    if (tipo_pagamento === 'vista') {
+      return financeiro.criar({ descricao: desc, valor: total, tipo: 'receita', data: hoje })
+    } else {
+      return contasReceber.criar({
+        id_dono:         id_dono || null,
+        descricao:       desc,
+        valor_total:     total,
+        data_vencimento: data_vencimento || null,
+        origem:          'clinica',
+      })
+    }
+  },
+
+  historicoPet(id_pet) {
+    const cs = db.prepare(`
+      SELECT c.id, 'consulta' AS tipo, c.data, c.hora,
+             c.queixa_principal AS titulo, c.diagnostico_definitivo AS detalhe,
+             v.nome AS veterinario, NULL AS status_reg
+      FROM consultas c
+      LEFT JOIN veterinarios v ON c.id_veterinario = v.id
+      WHERE c.id_pet = ?
+    `).all(id_pet)
+
+    const ins = db.prepare(`
+      SELECT i.id, 'internacao' AS tipo, i.data_entrada AS data, i.hora_entrada AS hora,
+             i.motivo AS titulo, NULL AS detalhe,
+             v.nome AS veterinario, i.status AS status_reg
+      FROM internacoes i
+      LEFT JOIN veterinarios v ON i.id_veterinario = v.id
+      WHERE i.id_pet = ?
+    `).all(id_pet)
+
+    const cirs = db.prepare(`
+      SELECT ci.id, 'cirurgia' AS tipo, ci.data, ci.hora_inicio AS hora,
+             ci.tipo_cirurgia AS titulo, NULL AS detalhe,
+             v.nome AS veterinario, NULL AS status_reg
+      FROM cirurgias ci
+      LEFT JOIN veterinarios v ON ci.id_cirurgiao = v.id
+      WHERE ci.id_pet = ?
+    `).all(id_pet)
+
+    const presc = db.prepare(`
+      SELECT p.id, 'prescricao' AS tipo, p.data, NULL AS hora,
+             NULL AS titulo, p.observacoes AS detalhe,
+             v.nome AS veterinario, NULL AS status_reg
+      FROM prescricoes p
+      LEFT JOIN veterinarios v ON p.id_veterinario = v.id
+      WHERE p.id_pet = ?
+    `).all(id_pet)
+
+    const exs = db.prepare(`
+      SELECT e.id, 'exame' AS tipo, e.data_coleta AS data, NULL AS hora,
+             e.tipo AS titulo, e.resultado AS detalhe,
+             e.veterinario AS veterinario, NULL AS status_reg
+      FROM exames e
+      WHERE e.id_pet = ?
+    `).all(id_pet)
+
+    const todos = [...cs, ...ins, ...cirs, ...presc, ...exs]
+    todos.sort((a, b) => {
+      const da = (a.data || '') + (a.hora || '')
+      const db2 = (b.data || '') + (b.hora || '')
+      return da < db2 ? 1 : da > db2 ? -1 : 0
+    })
+    return todos
+  },
+}
+
+module.exports = { connect, fechar, getDbPath, donos, pets, agendamentos, vacinas, financeiro, pesoHistorico, estoque, veterinarios, consultas, internacoes, cirurgias, prescricoes, configuracoes, exames, vendas, contasReceber, planos, entregas, clinica }

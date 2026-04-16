@@ -22,6 +22,7 @@ import Prescricoes from './pages/Prescricoes'
 import Vendas from './pages/Vendas'
 import Fiado from './pages/Fiado'
 import Planos from './pages/Planos'
+import Clinica from './pages/Clinica'
 
 // HashRouter é obrigatório no Electron — o app carrega de file://
 // e o BrowserRouter normal quebraria as rotas no executável final.
@@ -57,6 +58,7 @@ function App() {
               <Route path="/financeiro"    element={<RotaProtegida modKey="mod_financeiro"><Financeiro /></RotaProtegida>} />
               <Route path="/estoque"       element={<RotaProtegida modKey="mod_estoque"><Estoque /></RotaProtegida>} />
               <Route path="/veterinarios"  element={<RotaProtegida modKey="mod_veterinarios"><Veterinarios /></RotaProtegida>} />
+              <Route path="/clinica"       element={<RotaProtegida modKey="mod_consultas"><Clinica /></RotaProtegida>} />
               <Route path="/consultas"     element={<RotaProtegida modKey="mod_consultas"><Consultas /></RotaProtegida>} />
               <Route path="/internacoes"   element={<RotaProtegida modKey="mod_internacoes"><Internacoes /></RotaProtegida>} />
               <Route path="/cirurgias"     element={<RotaProtegida modKey="mod_cirurgias"><Cirurgias /></RotaProtegida>} />

@@ -3,14 +3,15 @@ import {
   LayoutDashboard, PawPrint, CalendarDays,
   Syringe, Wallet, Settings, Package,
   ChevronLeft, ChevronRight, Circle,
-  Stethoscope, BedDouble, Scissors, ClipboardList, UserRound, ShoppingCart, HandCoins, BadgeCheck
+  Stethoscope, BedDouble, Scissors, ClipboardList, UserRound, ShoppingCart, HandCoins, BadgeCheck,
+  LayoutGrid,
 } from 'lucide-react'
 import { useConfig } from '../contexts/ConfigContext'
 
 const TODOS_NAV = [
   { label: 'Dashboard',    icon: LayoutDashboard, path: '/',             modKey: null },
   { label: 'Vendas',       icon: ShoppingCart,    path: '/vendas',       modKey: 'mod_vendas' },
-  { label: 'Pets',         icon: PawPrint,        path: '/pets',         modKey: 'mod_pets' },
+  { label: 'Clientes',     icon: PawPrint,        path: '/pets',         modKey: 'mod_pets' },
   { label: 'Agendamentos', icon: CalendarDays,    path: '/agendamentos', modKey: 'mod_agendamentos' },
   { label: 'Vacinas',      icon: Syringe,         path: '/vacinas',      modKey: 'mod_vacinas' },
   { label: 'Financeiro',   icon: Wallet,          path: '/financeiro',   modKey: 'mod_financeiro' },
@@ -20,6 +21,7 @@ const TODOS_NAV = [
 ]
 
 const TODOS_CLINICA = [
+  { label: 'Panorama',     icon: LayoutGrid,    path: '/clinica',      modKey: 'mod_consultas' },
   { label: 'Consultas',    icon: Stethoscope,   path: '/consultas',    modKey: 'mod_consultas' },
   { label: 'Internações',  icon: BedDouble,     path: '/internacoes',  modKey: 'mod_internacoes' },
   { label: 'Cirurgias',    icon: Scissors,      path: '/cirurgias',    modKey: 'mod_cirurgias' },

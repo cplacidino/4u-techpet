@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   Wallet, Plus, TrendingUp, TrendingDown, DollarSign,
   Users, Download, Pencil, Trash2, BarChart2, Printer, X,
-  ChevronDown, ChevronUp, ShoppingCart, Stethoscope, SlidersHorizontal
+  ChevronDown, ChevronUp, ShoppingCart, Stethoscope, SlidersHorizontal,
+  Lock, Unlock, Eye, EyeOff,
 } from 'lucide-react'
 import ModalLancamento from '../components/financeiro/ModalLancamento'
 import { imprimirRelatorioFinanceiro } from '../utils/imprimir'
@@ -610,6 +611,199 @@ function RelatorioConteudo({ dados, tituloMes }) {
   )
 }
 
+// ── Modal de pagamento rápido (view bloqueada) ────────────
+
+function ModalPagamentoRapido({ onSalvar, onFechar }) {
+  const hoje = new Date().toISOString().split('T')[0]
+  const [form, setForm] = useState({ descricao: '', valor: '', tipo: 'receita' })
+  const [salvando, setSalvando] = useState(false)
+  const [erro, setErro] = useState('')
+
+  function set(campo, valor) {
+    setForm(f => ({ ...f, [campo]: valor }))
+    setErro('')
+  }
+
+  async function salvar(e) {
+    e.preventDefault()
+    if (!form.descricao.trim()) return setErro('Informe a descrição.')
+    const v = parseFloat(String(form.valor).replace(',', '.'))
+    if (!v || v <= 0) return setErro('Informe um valor válido.')
+    setSalvando(true)
+    try {
+      await window.api.financeiro.criar({ descricao: form.descricao.trim(), valor: v, tipo: form.tipo, data: hoje })
+      onSalvar()
+    } catch {
+      setErro('Erro ao salvar. Tente novamente.')
+    } finally {
+      setSalvando(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-sm w-full">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 bg-emerald-50 rounded-xl flex items-center justify-center">
+              <Plus size={18} className="text-emerald-600" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-slate-800">Registrar lançamento</h3>
+              <p className="text-xs text-slate-400">Hoje — {new Date().toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit', year:'numeric' })}</p>
+            </div>
+          </div>
+          <button onClick={onFechar} className="p-1.5 hover:bg-slate-100 rounded-xl transition-colors">
+            <X size={16} className="text-slate-400" />
+          </button>
+        </div>
+
+        <form onSubmit={salvar} className="space-y-3">
+          {/* Tipo */}
+          <div className="flex gap-2">
+            {[
+              { key: 'receita', label: '↑ Receita', active: 'bg-emerald-600 text-white', inactive: 'bg-slate-100 text-slate-600' },
+              { key: 'despesa', label: '↓ Despesa', active: 'bg-red-500 text-white', inactive: 'bg-slate-100 text-slate-600' },
+            ].map(({ key, label, active, inactive }) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => set('tipo', key)}
+                className={`flex-1 py-2 rounded-xl text-xs font-semibold transition-colors ${form.tipo === key ? active : inactive}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* Descrição */}
+          <input
+            type="text"
+            placeholder="Descrição"
+            value={form.descricao}
+            onChange={e => set('descricao', e.target.value)}
+            autoFocus
+            className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-400"
+          />
+
+          {/* Valor */}
+          <div className="relative">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400 font-medium">R$</span>
+            <input
+              type="number"
+              placeholder="0,00"
+              value={form.valor}
+              min="0.01"
+              step="0.01"
+              onChange={e => set('valor', e.target.value)}
+              className="w-full pl-9 pr-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-400"
+            />
+          </div>
+
+          {erro && <p className="text-xs text-red-500 px-1">{erro}</p>}
+
+          <div className="flex gap-3 pt-1">
+            <button
+              type="button"
+              onClick={onFechar}
+              className="flex-1 py-2.5 bg-slate-100 text-slate-700 rounded-xl text-sm font-medium hover:bg-slate-200 transition-colors"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              disabled={salvando}
+              className={`flex-1 py-2.5 text-white rounded-xl text-sm font-medium transition-colors disabled:opacity-60 ${
+                form.tipo === 'receita' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-red-500 hover:bg-red-600'
+              }`}
+            >
+              {salvando ? 'Salvando...' : 'Salvar'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// ── Modal de senha ────────────────────────────────────────
+
+function ModalSenha({ onDesbloquear, onFechar }) {
+  const [senha, setSenha]         = useState('')
+  const [mostrar, setMostrar]     = useState(false)
+  const [verificando, setVerificando] = useState(false)
+  const [erro, setErro]           = useState('')
+
+  async function verificar(e) {
+    e.preventDefault()
+    if (!senha) return
+    setVerificando(true)
+    setErro('')
+    try {
+      const res = await window.api.auth.verificarSenha(senha)
+      if (res.ok) {
+        onDesbloquear()
+      } else {
+        setErro(res.erro || 'Senha incorreta. Tente novamente.')
+        setSenha('')
+      }
+    } finally {
+      setVerificando(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-sm w-full">
+        <div className="w-12 h-12 bg-slate-100 rounded-2xl flex items-center justify-center mb-4 mx-auto">
+          <Lock size={22} className="text-slate-600" />
+        </div>
+        <h3 className="text-base font-bold text-slate-800 text-center mb-1">Acesso restrito</h3>
+        <p className="text-sm text-slate-400 text-center mb-5">
+          Digite a senha para ver o histórico completo.
+        </p>
+        <form onSubmit={verificar} className="space-y-3">
+          <div className="relative">
+            <input
+              type={mostrar ? 'text' : 'password'}
+              placeholder="Senha"
+              value={senha}
+              onChange={e => { setSenha(e.target.value); setErro('') }}
+              autoFocus
+              className={`w-full px-4 py-2.5 pr-10 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 ${erro ? 'border-red-300 bg-red-50' : 'border-slate-200'}`}
+            />
+            <button
+              type="button"
+              onClick={() => setMostrar(v => !v)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+            >
+              {mostrar ? <EyeOff size={15} /> : <Eye size={15} />}
+            </button>
+          </div>
+          {erro && <p className="text-xs text-red-500 px-1">{erro}</p>}
+          <div className="flex gap-3 pt-1">
+            <button
+              type="button"
+              onClick={onFechar}
+              className="flex-1 py-2.5 bg-slate-100 text-slate-700 rounded-xl text-sm font-medium hover:bg-slate-200 transition-colors"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              disabled={verificando || !senha}
+              className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-emerald-600 text-white rounded-xl text-sm font-medium hover:bg-emerald-700 transition-colors disabled:opacity-60"
+            >
+              {verificando ? <Unlock size={14} className="animate-pulse" /> : <Unlock size={14} />}
+              {verificando ? 'Verificando...' : 'Desbloquear'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 // ── Componente principal ──────────────────────────────────
 
 const PERIODOS = [
@@ -621,13 +815,17 @@ const PERIODOS = [
 
 export default function Financeiro() {
   const hoje = new Date().toISOString().split('T')[0]
+  const [desbloqueado, setDesbloqueado] = useState(false)
+  const [modalSenha, setModalSenha]     = useState(false)
   const [periodo, setPeriodo] = useState('mes')
   const [customInicio, setCustomInicio] = useState(hoje)
   const [customFim, setCustomFim] = useState(hoje)
 
   const [resumoMes, setResumoMes] = useState({ receitas: 0, despesas: 0, saldo: 0, atendimentos: 0, ticketMedio: 0 })
+  const [resumoHoje, setResumoHoje] = useState({ receitas: 0, despesas: 0, saldo: 0 })
   const [historico, setHistorico] = useState([])
   const [lancamentos, setLancamentos] = useState([])
+  const [lancamentosHoje, setLancamentosHoje] = useState([])
   const [carregandoResumo, setCarregandoResumo] = useState(true)
   const [carregandoLista, setCarregandoLista] = useState(true)
 
@@ -636,6 +834,7 @@ export default function Financeiro() {
   const [modal, setModal] = useState(null)       // null | 'novo' | lancamento (para editar)
   const [modalDelete, setModalDelete] = useState(null)
   const [modalRelatorio, setModalRelatorio] = useState(false)
+  const [modalPagRapido, setModalPagRapido] = useState(false)
 
   // Carrega resumo do mês atual e gráfico (não muda com o filtro de período)
   const carregarResumo = useCallback(async () => {
@@ -678,8 +877,18 @@ export default function Financeiro() {
     }
   }, [periodo, customInicio, customFim])
 
+  // Carrega dados de hoje (view bloqueada)
+  const carregarHoje = useCallback(async () => {
+    const lista = await window.api.financeiro.buscarPorPeriodo(hoje, hoje)
+    setLancamentosHoje(lista || [])
+    const r = (lista || []).filter(l => l.tipo === 'receita').reduce((s, l) => s + l.valor, 0)
+    const d = (lista || []).filter(l => l.tipo === 'despesa').reduce((s, l) => s + l.valor, 0)
+    setResumoHoje({ receitas: r, despesas: d, saldo: r - d })
+  }, [hoje])
+
   useEffect(() => { carregarResumo() }, [carregarResumo])
   useEffect(() => { carregarLista() }, [carregarLista])
+  useEffect(() => { carregarHoje() }, [carregarHoje])
 
   function aposAcao() {
     carregarResumo()
@@ -712,51 +921,148 @@ export default function Financeiro() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => setModalRelatorio(true)}
-            className="flex items-center gap-2 px-4 py-2 border border-slate-200 text-slate-600 rounded-xl text-sm font-medium hover:bg-slate-50 transition-colors"
-          >
-            <Printer size={15} />
-            Relatório
-          </button>
-          <button
-            onClick={() => setModal('novo')}
-            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-xl text-sm font-medium shadow-sm hover:bg-emerald-700 transition-colors"
-          >
-            <Plus size={16} />
-            Novo lançamento
-          </button>
+          {desbloqueado && (
+            <>
+              <button
+                onClick={() => setModalRelatorio(true)}
+                className="flex items-center gap-2 px-4 py-2 border border-slate-200 text-slate-600 rounded-xl text-sm font-medium hover:bg-slate-50 transition-colors"
+              >
+                <Printer size={15} />
+                Relatório
+              </button>
+              <button
+                onClick={() => setModal('novo')}
+                className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-xl text-sm font-medium shadow-sm hover:bg-emerald-700 transition-colors"
+              >
+                <Plus size={16} />
+                Novo lançamento
+              </button>
+            </>
+          )}
+          {!desbloqueado && (
+            <button
+              onClick={() => setModalSenha(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-slate-800 text-white rounded-xl text-sm font-medium hover:bg-slate-700 transition-colors"
+            >
+              <Lock size={15} />
+              Ver histórico completo
+            </button>
+          )}
+          {desbloqueado && (
+            <button
+              onClick={() => setDesbloqueado(false)}
+              className="flex items-center gap-2 px-3 py-2 border border-slate-200 text-slate-500 rounded-xl text-sm hover:bg-slate-50 transition-colors"
+              title="Bloquear financeiro"
+            >
+              <Unlock size={15} />
+            </button>
+          )}
         </div>
       </div>
 
-      {/* ── Cards resumo (mês atual) ── */}
-      <div>
-        <p className="text-xs font-medium text-slate-400 mb-2.5 uppercase tracking-wide">Resumo do mês atual</p>
-        <div className="grid grid-cols-5 gap-3">
-          {[
-            { label: 'Receitas',       value: fmtMoeda(resumoMes.receitas),    icon: TrendingUp,   textColor: 'text-emerald-600', iconBg: 'bg-emerald-50',  iconColor: 'text-emerald-600' },
-            { label: 'Despesas',       value: fmtMoeda(resumoMes.despesas),    icon: TrendingDown, textColor: 'text-red-500',     iconBg: 'bg-red-50',      iconColor: 'text-red-500'     },
-            { label: 'Saldo',          value: fmtMoeda(resumoMes.saldo),       icon: DollarSign,   textColor: resumoMes.saldo >= 0 ? 'text-slate-800' : 'text-red-500', iconBg: 'bg-slate-50', iconColor: 'text-slate-500' },
-            { label: 'Atendimentos',   value: resumoMes.atendimentos,          icon: Users,        textColor: 'text-slate-800',   iconBg: 'bg-violet-50',   iconColor: 'text-violet-500'  },
-            { label: 'Ticket médio',   value: fmtMoeda(resumoMes.ticketMedio), icon: Wallet,       textColor: 'text-slate-800',   iconBg: 'bg-blue-50',     iconColor: 'text-blue-500'    },
-          ].map(({ label, value, icon: Icon, textColor, iconBg, iconColor }) => (
-            <div key={label} className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4">
-              <div className="flex items-center gap-2 mb-2.5">
-                <div className={`w-7 h-7 ${iconBg} rounded-lg flex items-center justify-center flex-shrink-0`}>
-                  <Icon size={14} className={iconColor} />
+      {/* ── VIEW BLOQUEADA: só hoje ── */}
+      {!desbloqueado && (
+        <>
+          <div>
+            <p className="text-xs font-medium text-slate-400 mb-2.5 uppercase tracking-wide">
+              Resumo de hoje — {new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+            </p>
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                { label: 'Receitas hoje',  value: fmtMoeda(resumoHoje.receitas), icon: TrendingUp,   textColor: 'text-emerald-600', iconBg: 'bg-emerald-50', iconColor: 'text-emerald-600' },
+                { label: 'Despesas hoje',  value: fmtMoeda(resumoHoje.despesas), icon: TrendingDown, textColor: 'text-red-500',     iconBg: 'bg-red-50',     iconColor: 'text-red-500'     },
+                { label: 'Saldo de hoje',  value: fmtMoeda(resumoHoje.saldo),    icon: DollarSign,   textColor: resumoHoje.saldo >= 0 ? 'text-slate-800' : 'text-red-500', iconBg: 'bg-slate-50', iconColor: 'text-slate-500' },
+              ].map(({ label, value, icon: Icon, textColor, iconBg, iconColor }) => (
+                <div key={label} className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4">
+                  <div className="flex items-center gap-2 mb-2.5">
+                    <div className={`w-7 h-7 ${iconBg} rounded-lg flex items-center justify-center flex-shrink-0`}>
+                      <Icon size={14} className={iconColor} />
+                    </div>
+                    <span className="text-xs text-slate-400 leading-tight">{label}</span>
+                  </div>
+                  <p className={`text-lg font-bold ${textColor} leading-none`}>{value}</p>
                 </div>
-                <span className="text-xs text-slate-400 leading-tight">{label}</span>
-              </div>
-              <p className={`text-lg font-bold ${textColor} leading-none`}>
-                {carregandoResumo ? <span className="inline-block w-16 h-5 bg-slate-100 rounded animate-pulse" /> : value}
-              </p>
+              ))}
             </div>
-          ))}
-        </div>
-      </div>
+          </div>
 
-      {/* ── Gráfico ── */}
-      <GraficoBarras historico={historico} />
+          {/* Lista de lançamentos de hoje */}
+          <div className="bg-white rounded-2xl border border-slate-100 shadow-sm">
+            <div className="flex items-center justify-between px-4 py-3.5 border-b border-slate-100">
+              <span className="text-sm font-semibold text-slate-700">Lançamentos de hoje</span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-400">{lancamentosHoje.length} registro{lancamentosHoje.length !== 1 ? 's' : ''}</span>
+                <button
+                  onClick={() => setModalPagRapido(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white rounded-xl text-xs font-medium hover:bg-emerald-700 transition-colors"
+                >
+                  <Plus size={13} />
+                  Registrar
+                </button>
+              </div>
+            </div>
+            {lancamentosHoje.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 text-slate-400">
+                <Wallet size={28} className="mb-2 opacity-30" />
+                <p className="text-sm">Nenhum lançamento hoje</p>
+              </div>
+            ) : (
+              <div className="p-2 space-y-0.5">
+                {lancamentosHoje.map(l => (
+                  <LancamentoItem key={l.id} lancamento={l} onEditar={() => {}} onDeletar={() => {}} />
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Banner de bloqueio */}
+          <div
+            onClick={() => setModalSenha(true)}
+            className="flex items-center gap-4 p-4 bg-slate-800 text-white rounded-2xl cursor-pointer hover:bg-slate-700 transition-colors"
+          >
+            <div className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center flex-shrink-0">
+              <Lock size={20} />
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-semibold">Histórico completo bloqueado</p>
+              <p className="text-xs text-slate-400 mt-0.5">Clique aqui e digite a senha para ver todos os períodos, gráficos e relatórios.</p>
+            </div>
+            <Unlock size={18} className="text-slate-400 flex-shrink-0" />
+          </div>
+        </>
+      )}
+
+      {/* ── VIEW DESBLOQUEADA: tudo ── */}
+      {desbloqueado && (
+        <>
+          {/* Cards resumo mês atual */}
+          <div>
+            <p className="text-xs font-medium text-slate-400 mb-2.5 uppercase tracking-wide">Resumo do mês atual</p>
+            <div className="grid grid-cols-5 gap-3">
+              {[
+                { label: 'Receitas',       value: fmtMoeda(resumoMes.receitas),    icon: TrendingUp,   textColor: 'text-emerald-600', iconBg: 'bg-emerald-50',  iconColor: 'text-emerald-600' },
+                { label: 'Despesas',       value: fmtMoeda(resumoMes.despesas),    icon: TrendingDown, textColor: 'text-red-500',     iconBg: 'bg-red-50',      iconColor: 'text-red-500'     },
+                { label: 'Saldo',          value: fmtMoeda(resumoMes.saldo),       icon: DollarSign,   textColor: resumoMes.saldo >= 0 ? 'text-slate-800' : 'text-red-500', iconBg: 'bg-slate-50', iconColor: 'text-slate-500' },
+                { label: 'Atendimentos',   value: resumoMes.atendimentos,          icon: Users,        textColor: 'text-slate-800',   iconBg: 'bg-violet-50',   iconColor: 'text-violet-500'  },
+                { label: 'Ticket médio',   value: fmtMoeda(resumoMes.ticketMedio), icon: Wallet,       textColor: 'text-slate-800',   iconBg: 'bg-blue-50',     iconColor: 'text-blue-500'    },
+              ].map(({ label, value, icon: Icon, textColor, iconBg, iconColor }) => (
+                <div key={label} className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4">
+                  <div className="flex items-center gap-2 mb-2.5">
+                    <div className={`w-7 h-7 ${iconBg} rounded-lg flex items-center justify-center flex-shrink-0`}>
+                      <Icon size={14} className={iconColor} />
+                    </div>
+                    <span className="text-xs text-slate-400 leading-tight">{label}</span>
+                  </div>
+                  <p className={`text-lg font-bold ${textColor} leading-none`}>
+                    {carregandoResumo ? <span className="inline-block w-16 h-5 bg-slate-100 rounded animate-pulse" /> : value}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Gráfico */}
+          <GraficoBarras historico={historico} />
 
       {/* ── Lançamentos ── */}
       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm">
@@ -902,7 +1208,22 @@ export default function Financeiro() {
         )}
       </div>
 
+        </>
+      )}
+
       {/* ── Modais ── */}
+      {modalPagRapido && (
+        <ModalPagamentoRapido
+          onSalvar={() => { setModalPagRapido(false); carregarHoje(); carregarResumo() }}
+          onFechar={() => setModalPagRapido(false)}
+        />
+      )}
+      {modalSenha && (
+        <ModalSenha
+          onDesbloquear={() => { setDesbloqueado(true); setModalSenha(false) }}
+          onFechar={() => setModalSenha(false)}
+        />
+      )}
       {modalRelatorio && (
         <ModalRelatorio onFechar={() => setModalRelatorio(false)} />
       )}

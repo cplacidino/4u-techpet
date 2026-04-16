@@ -220,6 +220,15 @@ function ConsultaFormulario({ consulta, onSalvar, onCancelar }) {
       window.api.pets.buscarPorId(consulta.id_pet).then(pet => {
         if (pet) setPetSelecionado(pet)
       })
+    } else {
+      const raw = sessionStorage.getItem('clinica_pet_preselect')
+      if (raw) {
+        try {
+          const { id } = JSON.parse(raw)
+          window.api.pets.buscarPorId(id).then(pet => { if (pet) setPetSelecionado(pet) })
+          sessionStorage.removeItem('clinica_pet_preselect')
+        } catch {}
+      }
     }
   }, [consulta])
 
@@ -810,6 +819,9 @@ export default function Consultas() {
   }, [])
 
   useEffect(() => { carregar() }, [carregar])
+  useEffect(() => {
+    if (sessionStorage.getItem('clinica_pet_preselect')) novaConsulta()
+  }, []) // eslint-disable-line
 
   function verProntuario(c)  { setConsultaAtual(c); setView('prontuario') }
   function editarConsulta(c) { setConsultaAtual(c); setView('formulario') }

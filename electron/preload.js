@@ -56,6 +56,7 @@ contextBridge.exposeInMainWorld('api', {
     atualizarStatus: (id, status)    => ipcRenderer.invoke('agendamentos:atualizarStatus', { id, status }),
     editar:          (id, dados)     => ipcRenderer.invoke('agendamentos:editar', { id, dados }),
     deletar:         (id)            => ipcRenderer.invoke('agendamentos:deletar', id),
+    excluir:         (id)            => ipcRenderer.invoke('agendamentos:excluir', id),
     total:           ()              => ipcRenderer.invoke('agendamentos:total'),
   },
 
@@ -86,6 +87,8 @@ contextBridge.exposeInMainWorld('api', {
     historicoMovimentacoes:(id)                 => ipcRenderer.invoke('estoque:historicoMovimentacoes', id),
     editar:                (id, dados)          => ipcRenderer.invoke('estoque:editar', { id, dados }),
     deletar:               (id)                 => ipcRenderer.invoke('estoque:deletar', id),
+    listarPacotes:         ()                   => ipcRenderer.invoke('estoque:listarPacotes'),
+    puxarPacotes:          (id, n)              => ipcRenderer.invoke('estoque:puxarPacotes', { id, n }),
   },
 
   // ── VETERINÁRIOS ────────────────────────────────────────
@@ -174,11 +177,12 @@ contextBridge.exposeInMainWorld('api', {
 
   // ── VENDAS (PDV) ─────────────────────────────────────────
   vendas: {
-    criar:       (dados)        => ipcRenderer.invoke('vendas:criar', dados),
-    listar:      ()             => ipcRenderer.invoke('vendas:listar'),
-    buscarPorId: (id)           => ipcRenderer.invoke('vendas:buscarPorId', id),
-    cancelar:    (id, motivo)   => ipcRenderer.invoke('vendas:cancelar', { id, motivo }),
-    totalMes:    ()             => ipcRenderer.invoke('vendas:totalMes'),
+    criar:            (dados)                  => ipcRenderer.invoke('vendas:criar', dados),
+    listar:           ()                        => ipcRenderer.invoke('vendas:listar'),
+    listarCanceladas: ()                        => ipcRenderer.invoke('vendas:listarCanceladas'),
+    buscarPorId:      (id)                      => ipcRenderer.invoke('vendas:buscarPorId', id),
+    cancelar:         (id, motivo, voltaEstoque) => ipcRenderer.invoke('vendas:cancelar', { id, motivo, voltaEstoque }),
+    totalMes:         ()                        => ipcRenderer.invoke('vendas:totalMes'),
   },
 
   // ── FIADO (Contas a Receber) ─────────────────────────────
@@ -191,6 +195,7 @@ contextBridge.exposeInMainWorld('api', {
     buscarPagamentos:   (id_conta)       => ipcRenderer.invoke('fiado:buscarPagamentos', id_conta),
     totalEmAberto:      ()               => ipcRenderer.invoke('fiado:totalEmAberto'),
     deletar:            (id)             => ipcRenderer.invoke('fiado:deletar', id),
+    alertasVencimento:  ()               => ipcRenderer.invoke('fiado:alertasVencimento'),
   },
 
   // ── CONFIGURAÇÕES (Admin) ────────────────────────────────
@@ -246,13 +251,24 @@ contextBridge.exposeInMainWorld('api', {
     buscarAssinatura:   (id)           => ipcRenderer.invoke('planos:buscarAssinatura', id),
     alterarStatus:      (id, status)   => ipcRenderer.invoke('planos:alterarStatus', { id, status }),
     deletarAssinatura:  (id)           => ipcRenderer.invoke('planos:deletarAssinatura', id),
-    confirmarPagamento: (id_ciclo)     => ipcRenderer.invoke('planos:confirmarPagamento', id_ciclo),
+    confirmarPagamento: (id_ciclo, data_pagamento) => ipcRenderer.invoke('planos:confirmarPagamento', { id_ciclo, data_pagamento }),
     registrarUso:       (dados)        => ipcRenderer.invoke('planos:registrarUso', dados),
     listarUsosCiclo:    (id_ciclo)     => ipcRenderer.invoke('planos:listarUsosCiclo', id_ciclo),
-    deletarUso:         (id)           => ipcRenderer.invoke('planos:deletarUso', id),
+    deletarUso:                (id)     => ipcRenderer.invoke('planos:deletarUso', id),
+    listarUsosPorAssinatura:   (id)     => ipcRenderer.invoke('planos:listarUsosPorAssinatura', id),
+    listarCiclosPorAssinatura: (id)     => ipcRenderer.invoke('planos:listarCiclosPorAssinatura', id),
     resumoCicloAtual:   (id_assin)     => ipcRenderer.invoke('planos:resumoCicloAtual', id_assin),
-    assinaturasAtivas:  (id_dono)      => ipcRenderer.invoke('planos:assinaturasAtivas', id_dono),
-    alertas:            ()             => ipcRenderer.invoke('planos:alertas'),
+    assinaturasAtivas:       (id_dono)               => ipcRenderer.invoke('planos:assinaturasAtivas', id_dono),
+    assinaturasAtivasPorPet: (id_pet)                => ipcRenderer.invoke('planos:assinaturasAtivasPorPet', id_pet),
+    agendarSessoes:          (id_assinatura, sessoes) => ipcRenderer.invoke('planos:agendarSessoes', { id_assinatura, sessoes }),
+    alertas:                 ()                      => ipcRenderer.invoke('planos:alertas'),
+    renovarCiclo:            (id_assin)              => ipcRenderer.invoke('planos:renovarCiclo', id_assin),
+  },
+
+  // ── CLÍNICA — Panorama ───────────────────────────────────
+  clinica: {
+    historicoPet: (id_pet) => ipcRenderer.invoke('clinica:historicoPet', id_pet),
+    faturar:      (dados)  => ipcRenderer.invoke('clinica:faturar', dados),
   },
 
   // ── ENTREGAS ─────────────────────────────────────────────
@@ -273,9 +289,10 @@ contextBridge.exposeInMainWorld('api', {
 
   // ── AUTENTICAÇÃO ─────────────────────────────────────────
   auth: {
-    login:      (email, senha) => ipcRenderer.invoke('auth:login', { email, senha }),
-    verificar:  ()             => ipcRenderer.invoke('auth:verificar'),
-    logout:     ()             => ipcRenderer.invoke('auth:logout'),
-    tokenSalvo: ()             => ipcRenderer.invoke('auth:tokenSalvo'),
+    login:          (email, senha) => ipcRenderer.invoke('auth:login', { email, senha }),
+    verificar:      ()             => ipcRenderer.invoke('auth:verificar'),
+    logout:         ()             => ipcRenderer.invoke('auth:logout'),
+    tokenSalvo:     ()             => ipcRenderer.invoke('auth:tokenSalvo'),
+    verificarSenha: (senha)        => ipcRenderer.invoke('auth:verificarSenha', senha),
   },
 })
